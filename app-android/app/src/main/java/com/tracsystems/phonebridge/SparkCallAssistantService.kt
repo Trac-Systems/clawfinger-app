@@ -422,10 +422,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 return@execute
             }
-            val skipAsrForTurn = transcriptPreview.isNotBlank()
-            if (!skipAsrForTurn) {
-                CommandAuditLog.add("voice_bridge:turn_server_asr_fallback")
-            }
             val seedAudio = transcriptAudioWav ?: buildSilenceWav(320)
             val assembledUtterance = if (!ENABLE_UTTERANCE_STATE_MACHINE && ENABLE_UTTERANCE_CONTINUATION && shouldCollectContinuation(transcriptPreview)) {
                 assembleUtteranceContinuation(
@@ -443,6 +439,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             transcriptPreview = assembledUtterance.transcript
             transcriptAudioWav = assembledUtterance.audioWav
             transcriptChunkCount = assembledUtterance.chunkCount
+            val skipAsrForTurn = transcriptPreview.isNotBlank()
+            if (!skipAsrForTurn) {
+                val reason = "local_asr_empty"
+                CommandAuditLog.add("voice_bridge:turn_server_asr_fallback:$reason")
+            }
             if (transcriptChunkCount > 1) {
                 Log.i(TAG, "assembled utterance chunks=$transcriptChunkCount transcript=${transcriptPreview.take(140)}")
                 CommandAuditLog.add("voice_bridge:utterance_chunks:$transcriptChunkCount")
@@ -670,6 +671,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 transcript = "",
                 audioWav = utteranceWav,
                 chunkCount = max(1, chunkCount),
+                localAsrScore = 0,
             )
         }
         Log.i(
@@ -681,6 +683,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             transcript = transcript,
             audioWav = utteranceWav,
             chunkCount = max(1, chunkCount),
+            localAsrScore = adaptiveAsr?.score ?: 0,
         )
     }
 
@@ -2213,6 +2216,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (best == null || candidate.score > best!!.score) {
                 best = candidate
             }
+            if (rejectReason == null && score >= ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE) {
+                break
+            }
         }
 
         val selected = best ?: return null
@@ -2273,6 +2279,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val coreTokens = tokens.filter { it.length >= 2 }
         if (coreTokens.isEmpty()) {
             return "no_tokens"
+        }
+        if (coreTokens.size == 1 && coreTokens.first().length <= 3) {
+            return "single_token_short"
         }
         if (coreTokens.size >= 5) {
             val uniqueTokenRatio = coreTokens.toSet().size.toDouble() / coreTokens.size.toDouble()
@@ -2339,6 +2348,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val transcript: String,
         val audioWav: ByteArray,
         val chunkCount: Int,
+        val localAsrScore: Int = 0,
     )
 
     private data class AdaptiveAsrResult(
@@ -3449,6 +3459,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
         private const val ENABLE_ADAPTIVE_CAPTURE_RATE = true
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
+        private const val ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE = 11
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
         private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(24_000, 32_000, 16_000)
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
@@ -3481,9 +3492,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1700, 2100, 2500)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
-        private const val UTTERANCE_CAPTURE_CHUNK_MS = 380
-        private const val UTTERANCE_PRE_ROLL_MS = 500
-        private const val UTTERANCE_MIN_SPEECH_MS = 560
+        private const val UTTERANCE_CAPTURE_CHUNK_MS = 260
+        private const val UTTERANCE_PRE_ROLL_MS = 640
+        private const val UTTERANCE_MIN_SPEECH_MS = 260
         private const val UTTERANCE_SILENCE_MS = 760
         private const val UTTERANCE_MAX_TURN_MS = 8_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 11_000

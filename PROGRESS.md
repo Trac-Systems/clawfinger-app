@@ -2533,3 +2533,33 @@ _Last updated: 2026-02-19_
   - `npm run test:unit`
   - `npm run test:integration`
   - `npm run test:e2e-sim`
+
+## 2026-02-20 08:32 — Autonomous robustness pass on 3-WAV workflow (no operator pickup)
+
+### Goal
+- Continue stabilization without requiring live pickup loops.
+- Use existing captured WAV corpus as autonomous replay baseline.
+
+### Changes
+- Tightened transcript acceptance with a **generic** short-single-token reject:
+  - rejects 1-token transcripts of length `<= 3` (`single_token_short`).
+  - avoids low-value turns like `you` while keeping non-lexical logic.
+- Kept server-ASR fallback only for truly empty local ASR:
+  - `skip_asr=false` only when local transcript is blank.
+  - avoids expensive server re-ASR on garbage transcripts that already failed locally.
+- Reduced turn boundary lag and improved short-utterance capture responsiveness:
+  - `UTTERANCE_CAPTURE_CHUNK_MS: 380 -> 260`
+  - `UTTERANCE_PRE_ROLL_MS: 500 -> 640`
+  - `UTTERANCE_MIN_SPEECH_MS: 560 -> 260`
+- Added adaptive ASR early-exit to cut latency on high-confidence candidate rates:
+  - exits candidate loop when score crosses `ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE`.
+
+### Autonomous validation
+- Rebuilt + reinstalled debug APK.
+- Full local test suite still passing:
+  - `npm run test:unit`
+  - `npm run test:integration`
+  - `npm run test:e2e-sim`
+- Replay artifacts persisted under latest `phone/debug-wavs/autotest-*` folder:
+  - `autonomous-replay.txt` (ASR vs skip/server turn behavior)
+  - `autonomous-gating-eval.txt` (rule outcome summary)
