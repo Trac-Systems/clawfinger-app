@@ -2358,3 +2358,30 @@ _Last updated: 2026-02-19_
 
 ### Deploy
 - Rebuilt and reinstalled debug APK successfully.
+
+## 2026-02-20 07:58 — Switched phone capture to continuous root stream endpointing
+
+### Why
+- User requested replacing brittle chunk polling with streaming behavior equivalent to Spark Voice Gateway live path.
+- Root issue: per-window `tinycap` restarts were clipping utterance boundaries and adding turn latency.
+
+### Implementation
+- Replaced per-window root capture in `captureUtteranceStateMachine()` with **continuous root stream** capture:
+  - starts persistent `tinycap` process writing to FIFO,
+  - reads PCM continuously from FIFO,
+  - applies VAD endpointing (pre-roll, speech start, silence hangover, max turn).
+- Added root capture stream lifecycle:
+  - `ensureRootCaptureStreamSession()`
+  - `startRootTinycapStreamSession()`
+  - `readRootCaptureStreamChunk()`
+  - `stopRootCaptureStreamSession()`
+- Added auto-restart on stream read timeouts and source-rotation stream reset.
+- Kept merged-utterance forensic dump (`rxm-*`) active for verification.
+- Disabled old continuation combiner path while state-machine streaming is active.
+
+### Design reference
+- Mirrored the Spark live endpointing pattern used in control/gateway implementation:
+  - pre-roll + VAD + silence endpoint + max-turn flush.
+
+### Deploy
+- Rebuilt and reinstalled debug APK successfully.

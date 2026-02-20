@@ -25,6 +25,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -51,6 +52,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var selectedRootCaptureSampleRate: Int? = null
     private var selectedRootCaptureChannels: Int? = null
     private var selectedRootPlaybackDevice: Int? = null
+    private var rootCaptureStreamSession: RootCaptureStreamSession? = null
     private var consecutiveNoAudioRejects: Int = 0
     private var enrolledSpeaker: SpeakerFingerprint? = null
     @Volatile
@@ -136,6 +138,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             selectedRootCaptureSampleRate = null
             selectedRootCaptureChannels = null
             selectedRootPlaybackDevice = null
+            stopRootCaptureStreamSession("service_start_reset")
             consecutiveNoAudioRejects = 0
             enrolledSpeaker = null
             lastAssistantReplyText = ""
@@ -166,6 +169,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (callMuteEnforced.compareAndSet(true, false)) {
             InCallStateHolder.setCallMuted(false)
         }
+        stopRootCaptureStreamSession("service_destroy")
         restoreRootCallRouteProfile()
         networkExecutor.shutdownNow()
         CommandAuditLog.add("voice_bridge:stop")
@@ -538,17 +542,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (!ENABLE_ROOT_PCM_BRIDGE) {
             return null
         }
-        var source = selectedRootCaptureSource
-            ?: ROOT_CAPTURE_CANDIDATES.firstOrNull()
-            ?: return null
-        selectedRootCaptureSource = source
-
-        var targetSampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
-        val preRollMaxBytes = ((targetSampleRate * UTTERANCE_PRE_ROLL_MS) / 1000) * 2
-        val minSpeechSamples = (targetSampleRate * UTTERANCE_MIN_SPEECH_MS) / 1000
-        val silenceSamplesLimit = (targetSampleRate * UTTERANCE_SILENCE_MS) / 1000
-        val maxTurnSamples = (targetSampleRate * UTTERANCE_MAX_TURN_MS) / 1000
-
         var preRoll = ByteArray(0)
         val current = ByteArrayOutputStream()
         var speakingNow = false
@@ -556,52 +549,61 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         var silenceSamples = 0
         var chunkCount = 0
         var loopMs = 0
-        var lastTranscriptReject: String? = null
+        var sampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+        val updateDerivedThresholds = {
+            val preRollMaxBytes = ((sampleRate * UTTERANCE_PRE_ROLL_MS) / 1000) * 2
+            val minSpeechSamples = (sampleRate * UTTERANCE_MIN_SPEECH_MS) / 1000
+            val silenceSamplesLimit = (sampleRate * UTTERANCE_SILENCE_MS) / 1000
+            val maxTurnSamples = (sampleRate * UTTERANCE_MAX_TURN_MS) / 1000
+            EndpointThresholds(
+                preRollMaxBytes = preRollMaxBytes,
+                minSpeechSamples = minSpeechSamples,
+                silenceSamplesLimit = silenceSamplesLimit,
+                maxTurnSamples = maxTurnSamples,
+            )
+        }
+        var thresholds = updateDerivedThresholds()
 
         while (loopMs < UTTERANCE_LOOP_TIMEOUT_MS && InCallStateHolder.hasLiveCall()) {
-            val captured = captureRootPcmAdaptive(
-                device = source.device,
-                durationMs = UTTERANCE_CAPTURE_CHUNK_MS,
-                preferredSampleRate = targetSampleRate,
-            )
-            loopMs += UTTERANCE_CAPTURE_CHUNK_MS
-            if (captured == null) {
+            val streamSession = ensureRootCaptureStreamSession()
+            if (streamSession == null) {
                 consecutiveNoAudioRejects += 1
                 maybeRecoverRootRoute()
+                loopMs += UTTERANCE_CAPTURE_CHUNK_MS
+                continue
+            }
+            if (streamSession.effectiveSampleRate != sampleRate) {
+                sampleRate = streamSession.effectiveSampleRate
+                thresholds = updateDerivedThresholds()
+            }
+            val captured = readRootCaptureStreamChunk(streamSession, UTTERANCE_CAPTURE_CHUNK_MS)
+            loopMs += UTTERANCE_CAPTURE_CHUNK_MS
+            if (captured == null || captured.pcm.size < 2) {
+                consecutiveNoAudioRejects += 1
+                maybeRecoverRootRoute()
+                if (consecutiveNoAudioRejects >= ROOT_CAPTURE_STREAM_RESTART_THRESHOLD) {
+                    stopRootCaptureStreamSession("stream_timeout_$consecutiveNoAudioRejects")
+                }
                 if (consecutiveNoAudioRejects >= NO_AUDIO_UNPIN_THRESHOLD) {
-                    resetRootCapturePin("utterance_state_no_audio_$consecutiveNoAudioRejects")
-                    source = selectedRootCaptureSource
-                        ?: ROOT_CAPTURE_CANDIDATES.firstOrNull()
-                        ?: source
+                    resetRootCapturePin("utterance_stream_no_audio_$consecutiveNoAudioRejects")
+                    rotateRootCaptureSource()
                 }
                 if (speakingNow) {
-                    silenceSamples += (targetSampleRate * UTTERANCE_CAPTURE_CHUNK_MS) / 1000
-                    if (silenceSamples >= silenceSamplesLimit && speechSamples >= minSpeechSamples) {
+                    silenceSamples += (sampleRate * UTTERANCE_CAPTURE_CHUNK_MS) / 1000
+                    if (silenceSamples >= thresholds.silenceSamplesLimit && speechSamples >= thresholds.minSpeechSamples) {
                         break
                     }
                 }
                 continue
             }
             consecutiveNoAudioRejects = 0
-            selectedRootCaptureSampleRate = captured.sampleRate
-            selectedRootCaptureChannels = captured.channels
-            if (captured.sampleRate != targetSampleRate) {
-                targetSampleRate = captured.sampleRate
-            }
-            val pcm = if (captured.sampleRate == targetSampleRate) {
-                captured.pcm
-            } else {
-                resamplePcm16Mono(captured.pcm, captured.sampleRate, targetSampleRate)
-            }
-            if (pcm.size < 2) {
-                continue
-            }
+            val pcm = captured.pcm
             val chunkSamples = pcm.size / 2
             val rms = rmsPcm16(pcm)
             val voiced = rms >= UTTERANCE_VAD_RMS
 
             if (!speakingNow) {
-                preRoll = appendAndTrimBytes(preRoll, pcm, preRollMaxBytes)
+                preRoll = appendAndTrimBytes(preRoll, pcm, thresholds.preRollMaxBytes)
                 if (!voiced) {
                     continue
                 }
@@ -622,25 +624,25 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             current.write(pcm)
             chunkCount += 1
             val totalSamples = current.size() / 2
-            val shouldFlush = totalSamples >= maxTurnSamples || (
-                silenceSamples >= silenceSamplesLimit && speechSamples >= minSpeechSamples
+            val shouldFlush = totalSamples >= thresholds.maxTurnSamples || (
+                silenceSamples >= thresholds.silenceSamplesLimit && speechSamples >= thresholds.minSpeechSamples
             )
             if (shouldFlush) {
                 break
             }
         }
 
-        if (!speakingNow || speechSamples < minSpeechSamples || current.size() < 2) {
+        if (!speakingNow || speechSamples < thresholds.minSpeechSamples || current.size() < 2) {
             return null
         }
         val utterancePcm = current.toByteArray()
-        val maxBytes = maxTurnSamples * 2
+        val maxBytes = thresholds.maxTurnSamples * 2
         val cappedPcm = if (utterancePcm.size > maxBytes && maxBytes > 0) {
             utterancePcm.copyOfRange(0, maxBytes)
         } else {
             utterancePcm
         }
-        val utteranceWav = pcm16ToWav(cappedPcm, targetSampleRate)
+        val utteranceWav = pcm16ToWav(cappedPcm, sampleRate)
         if (ENABLE_DEBUG_WAV_DUMP) {
             persistDebugWav(
                 prefix = "rxm",
@@ -661,10 +663,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         val rejectReason = transcriptRejectReason(transcript)
         if (rejectReason != null && rejectReason != "low_information") {
-            lastTranscriptReject = rejectReason
-        }
-        if (lastTranscriptReject != null) {
-            CommandAuditLog.add("voice_bridge:transcript_reject:$lastTranscriptReject")
+            CommandAuditLog.add("voice_bridge:transcript_reject:$rejectReason")
             return null
         }
         pinRootCaptureSource()
@@ -1425,6 +1424,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } else {
             ROOT_CAPTURE_CANDIDATES.first()
         }
+        if (next.device != current?.device) {
+            stopRootCaptureStreamSession("rotate_source")
+        }
         selectedRootCaptureSource = next
         CommandAuditLog.add("voice_bridge:root_source_rotate:${next.name}")
     }
@@ -1439,6 +1441,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         rootCapturePinned = false
         selectedRootCaptureSampleRate = null
         selectedRootCaptureChannels = null
+        stopRootCaptureStreamSession("unpin:$reason")
         CommandAuditLog.add("voice_bridge:root_source_unpinned:$reason")
         Log.w(TAG, "root capture source unpinned: $reason")
     }
@@ -2224,10 +2227,29 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val pid: Int,
     )
 
+    private data class RootCaptureStreamSession(
+        val fifoFile: File,
+        val inputStream: FileInputStream,
+        val device: Int,
+        val rawSampleRate: Int,
+        val effectiveSampleRate: Int,
+        val channels: Int,
+        val bitsPerSample: Int,
+        val pid: Int,
+        var pendingData: ByteArray = ByteArray(0),
+    )
+
     private data class AssembledUtterance(
         val transcript: String,
         val audioWav: ByteArray,
         val chunkCount: Int,
+    )
+
+    private data class EndpointThresholds(
+        val preRollMaxBytes: Int,
+        val minSpeechSamples: Int,
+        val silenceSamplesLimit: Int,
+        val maxTurnSamples: Int,
     )
 
     private data class CaptureResult(
@@ -2706,6 +2728,239 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return Regex("(\\d+)").find(result.stdout)?.groupValues?.get(1)?.toIntOrNull()
     }
 
+    private fun ensureRootCaptureStreamSession(): RootCaptureStreamSession? {
+        if (!ENABLE_ROOT_PCM_BRIDGE) {
+            return null
+        }
+        val source = selectedRootCaptureSource
+            ?: ROOT_CAPTURE_CANDIDATES.firstOrNull()
+            ?: return null
+        selectedRootCaptureSource = source
+        val existing = rootCaptureStreamSession
+        if (existing != null && existing.device == source.device) {
+            return existing
+        }
+        stopRootCaptureStreamSession("capture_stream_rebind")
+        val preferredRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+        val preferredChannels = selectedRootCaptureChannels ?: ROOT_CAPTURE_PRIMARY_CHANNELS
+        val started = startRootTinycapStreamSession(
+            source = source,
+            sampleRate = preferredRate,
+            channels = preferredChannels,
+        ) ?: return null
+        rootCaptureStreamSession = started
+        selectedRootCaptureSampleRate = started.effectiveSampleRate
+        selectedRootCaptureChannels = 1
+        CommandAuditLog.add("voice_bridge:root_stream_capture:${source.name}")
+        return started
+    }
+
+    private fun startRootTinycapStreamSession(
+        source: RootCaptureCandidate,
+        sampleRate: Int,
+        channels: Int,
+    ): RootCaptureStreamSession? {
+        val fifoFile = File(filesDir, "pb-rootcap-stream-${System.currentTimeMillis()}-${source.device}.wav")
+        val prep = RootShellRuntime.run(
+            command = "rm -f ${shellQuote(fifoFile.absolutePath)} && mkfifo ${shellQuote(fifoFile.absolutePath)} && chmod 666 ${shellQuote(fifoFile.absolutePath)}",
+            timeoutMs = 2_500L,
+        )
+        if (!prep.ok) {
+            return null
+        }
+        val pid = startRootTinycapRawProcess(
+            fifoFile = fifoFile,
+            device = source.device,
+            sampleRate = sampleRate,
+            channels = channels,
+            bitsPerSample = ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE,
+        ) ?: run {
+            runCatching { fifoFile.delete() }
+            return null
+        }
+        val input = runCatching { FileInputStream(fifoFile) }.getOrNull()
+        if (input == null) {
+            stopRootPlaybackProcess(pid)
+            runCatching { fifoFile.delete() }
+            return null
+        }
+        val deadline = System.currentTimeMillis() + ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS
+        val headerBytes = ByteArrayOutputStream()
+        val readBuffer = ByteArray(2048)
+        var header: StreamedWavHeader? = null
+        while (System.currentTimeMillis() < deadline && header == null) {
+            val available = runCatching { input.available() }.getOrDefault(0)
+            if (available <= 0) {
+                Thread.sleep(12L)
+                continue
+            }
+            val read = runCatching { input.read(readBuffer, 0, minOf(readBuffer.size, available)) }.getOrDefault(-1)
+            if (read <= 0) {
+                Thread.sleep(8L)
+                continue
+            }
+            headerBytes.write(readBuffer, 0, read)
+            header = parseStreamedWavHeader(headerBytes.toByteArray())
+        }
+        if (header == null) {
+            runCatching { input.close() }
+            stopRootPlaybackProcess(pid)
+            runCatching { fifoFile.delete() }
+            return null
+        }
+        val initialBytes = headerBytes.toByteArray()
+        val pending = if (initialBytes.size > header.dataOffset) {
+            initialBytes.copyOfRange(header.dataOffset, initialBytes.size)
+        } else {
+            ByteArray(0)
+        }
+        val effectiveSampleRate = applyRootCaptureSampleRateCorrection(source.device, header.sampleRate)
+        if (effectiveSampleRate != header.sampleRate) {
+            Log.w(
+                TAG,
+                "root stream sampleRate corrected device=${source.device} from=${header.sampleRate} to=$effectiveSampleRate",
+            )
+        }
+        return RootCaptureStreamSession(
+            fifoFile = fifoFile,
+            inputStream = input,
+            device = source.device,
+            rawSampleRate = header.sampleRate,
+            effectiveSampleRate = effectiveSampleRate,
+            channels = header.channels.coerceAtLeast(1),
+            bitsPerSample = header.bitsPerSample.coerceAtLeast(16),
+            pid = pid,
+            pendingData = pending,
+        )
+    }
+
+    private fun startRootTinycapRawProcess(
+        fifoFile: File,
+        device: Int,
+        sampleRate: Int,
+        channels: Int,
+        bitsPerSample: Int,
+    ): Int? {
+        val command = buildString {
+            append(ROOT_TINYCAP_BIN)
+            append(" ")
+            append(shellQuote(fifoFile.absolutePath))
+            append(" -D 0 -d ")
+            append(device)
+            append(" -c ")
+            append(channels.coerceAtLeast(1))
+            append(" -r ")
+            append(sampleRate.coerceAtLeast(8000))
+            append(" -b ")
+            append(bitsPerSample.coerceAtLeast(16))
+            append(" -t ")
+            append(ROOT_CAPTURE_STREAM_DURATION_SEC)
+            append(" >/dev/null 2>&1 & echo $!")
+        }
+        val result = RootShellRuntime.run(
+            command = command,
+            timeoutMs = ROOT_PLAY_START_TIMEOUT_MS,
+        )
+        if (!result.ok) {
+            Log.w(
+                TAG,
+                "root tinycap stream start failed device=$device err=${result.error ?: "none"} stderr=${result.stderr.ifBlank { "unknown" }}",
+            )
+            return null
+        }
+        return Regex("(\\d+)").find(result.stdout)?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    private fun readRootCaptureStreamChunk(
+        session: RootCaptureStreamSession,
+        durationMs: Int,
+    ): RootCaptureFrame? {
+        if (session.bitsPerSample < 16) {
+            return null
+        }
+        val bytesPerSample = (session.bitsPerSample / 8).coerceAtLeast(2)
+        val targetRawBytes = (((session.rawSampleRate * durationMs) / 1000) * session.channels * bytesPerSample)
+            .coerceAtLeast(MIN_ROOT_STREAM_CHUNK_BYTES)
+        val rawBytes = readRootCaptureStreamBytes(session, targetRawBytes, ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS)
+            ?: return null
+        if (rawBytes.size < bytesPerSample) {
+            return null
+        }
+        val pcm16 = if (bytesPerSample == 2) {
+            rawBytes
+        } else {
+            rawBytes
+        }
+        val mono = interleavedPcm16ToMono(pcm16, session.channels)
+        if (mono.isEmpty()) {
+            return null
+        }
+        val effective = if (session.effectiveSampleRate == session.rawSampleRate) {
+            mono
+        } else {
+            resamplePcm16Mono(
+                pcm = mono,
+                fromSampleRate = session.rawSampleRate,
+                toSampleRate = session.effectiveSampleRate,
+            )
+        }
+        return RootCaptureFrame(
+            pcm = effective,
+            sampleRate = session.effectiveSampleRate,
+            channels = 1,
+        )
+    }
+
+    private fun readRootCaptureStreamBytes(
+        session: RootCaptureStreamSession,
+        targetBytes: Int,
+        timeoutMs: Long,
+    ): ByteArray? {
+        val output = ByteArrayOutputStream(targetBytes.coerceAtLeast(256))
+        if (session.pendingData.isNotEmpty()) {
+            val consume = minOf(targetBytes, session.pendingData.size)
+            output.write(session.pendingData, 0, consume)
+            session.pendingData = if (consume < session.pendingData.size) {
+                session.pendingData.copyOfRange(consume, session.pendingData.size)
+            } else {
+                ByteArray(0)
+            }
+        }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val buffer = ByteArray(4096)
+        while (output.size() < targetBytes && System.currentTimeMillis() < deadline) {
+            val remaining = targetBytes - output.size()
+            val available = runCatching { session.inputStream.available() }.getOrDefault(0)
+            if (available <= 0) {
+                Thread.sleep(10L)
+                continue
+            }
+            val toRead = minOf(buffer.size, available, remaining)
+            val read = runCatching { session.inputStream.read(buffer, 0, toRead) }.getOrDefault(-1)
+            if (read <= 0) {
+                Thread.sleep(8L)
+                continue
+            }
+            output.write(buffer, 0, read)
+        }
+        return if (output.size() >= MIN_ROOT_STREAM_CHUNK_BYTES) {
+            output.toByteArray()
+        } else {
+            null
+        }
+    }
+
+    private fun stopRootCaptureStreamSession(reason: String? = null) {
+        val current = rootCaptureStreamSession ?: return
+        rootCaptureStreamSession = null
+        runCatching { current.inputStream.close() }
+        stopRootPlaybackProcess(current.pid)
+        runCatching { current.fifoFile.delete() }
+        reason?.takeIf { it.isNotBlank() }?.let {
+            CommandAuditLog.add("voice_bridge:root_stream_capture_stop:$it")
+        }
+    }
+
     private fun writeFormField(
         out: DataOutputStream,
         boundary: String,
@@ -3070,6 +3325,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_PRECISE_MAX_MS = 2_400
         private const val ROOT_CAPTURE_PRECISE_EXTRA_SECONDS = 1
         private const val MIN_ROOT_RAW_CAPTURE_BYTES = 320
+        private const val ROOT_CAPTURE_STREAM_DURATION_SEC = 900
+        private const val ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE = 16
+        private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
+        private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 760L
+        private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 3
+        private const val MIN_ROOT_STREAM_CHUNK_BYTES = 320
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 900
         private const val ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS = 320
