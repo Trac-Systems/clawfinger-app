@@ -2192,3 +2192,18 @@ _Last updated: 2026-02-19_
   - `ENABLE_BARGE_IN_INTERRUPT = false`
   - removed later barge-in mitigation edits introduced after re-enable.
 - This returns runtime behavior to the previously locked non-barge profile.
+
+## 2026-02-20 07:13 — Runtime audio-route hard reset after post-revert instability
+
+### Why
+- User reported continued instability even after code rollback to locked baseline.
+- Verified code file is byte-identical to `9c817ca`; issue likely runtime audio-route state, not source mismatch.
+
+### Runtime reset executed
+- Force-stopped app process:
+  - `am force-stop com.tracsystems.phonebridge`
+- Killed leftover root audio helpers:
+  - `phonebridge-tinyplay`, `phonebridge-tinycap`
+- Explicitly restored mixer route to idle (same as `ROOT_CALL_ROUTE_RESTORE_COMMANDS`):
+  - control ids `116,117,120,121,122,123,124,125,135,136`
+- Cleared logcat for clean next-call diagnostics.
