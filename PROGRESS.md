@@ -2295,3 +2295,30 @@ _Last updated: 2026-02-19_
 
 ### Deploy
 - Rebuilt and reinstalled debug APK successfully.
+
+## 2026-02-20 07:41 — Pulled latest regression call + reduced turn-latency profile
+
+### Trigger
+- User reported latest call still clips user speech and latency regressed (~6s before response).
+
+### Forensics (latest call)
+- Bundle: `debug-wavs/last-call-2026-02-20-0638/`
+- RX transcripts:
+  - `Hello, who's there?`
+  - `Good movie.`
+- Logs show latency contributors:
+  - continuation waited for **two boundary windows** (`boundary=1/2`, `2/2`) after each seed chunk,
+  - repeated `no_audio_source` retries before attempt-3 capture.
+
+### Latency tuning changes
+- Reduced initial capture windows:
+  - `CAPTURE_DURATION_BY_ATTEMPT_MS: 1800/2200/2600 -> 1500/1900/2300`
+- Reduced continuation overhead:
+  - `UTTERANCE_CONTINUATION_CAPTURE_MS: 1200 -> 900`
+  - `MAX_UTTERANCE_CONTINUATION_WINDOWS: 4 -> 2`
+  - `UTTERANCE_END_BOUNDARY_WINDOWS: 2 -> 1`
+- Faster source recovery from no-audio:
+  - `MAX_SAME_SOURCE_RETRIES: 2 -> 1`
+
+### Deploy
+- Rebuilt + reinstalled debug APK successfully.
