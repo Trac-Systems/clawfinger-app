@@ -604,6 +604,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 consecutiveNoAudioRejects += 1
                 maybeRecoverRootRoute()
                 loopMs += UTTERANCE_CAPTURE_CHUNK_MS
+                if (!speakingNow && loopMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
+                    CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:stream_session_null")
+                    return null
+                }
                 continue
             }
             if (streamSession.effectiveSampleRate != sampleRate) {
@@ -627,6 +631,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     if (silenceSamples >= thresholds.silenceSamplesLimit && speechSamples >= thresholds.minSpeechSamples) {
                         break
                     }
+                } else if (loopMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
+                    CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:empty_chunk")
+                    return null
                 }
                 continue
             }
@@ -641,6 +648,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 preRoll = appendAndTrimBytes(preRoll, pcm, thresholds.preRollMaxBytes)
                 if (!voiced) {
                     appendRootRollingPrebuffer(captured)
+                    if (loopMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
+                        CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:unvoiced")
+                        return null
+                    }
                     continue
                 }
                 speakingNow = true
@@ -3609,6 +3620,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 6_000L
         private const val UTTERANCE_MAX_TURN_MS = 16_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
+        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 3_600
         private const val UTTERANCE_VAD_RMS = 80.0
         private const val ENABLE_UTTERANCE_CONTINUATION = false
         private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 900

@@ -2718,3 +2718,23 @@ _Last updated: 2026-02-19_
 ### Build/deploy
 - Rebuilt and reinstalled debug APK successfully.
 - Default dialer role still `com.tracsystems.phonebridge`.
+
+## 2026-02-20 10:03 — Fix for no-response-after-greeting stall
+
+### Observed regression
+- Latest call had greeting playback, then no further assistant response.
+- Log showed `requestReplyFromAudioFallback start` with no subsequent utterance/transcript logs before call end.
+
+### Root cause
+- First-turn state-machine capture could spend too long waiting for voiced data before falling back, causing an apparent dead turn when caller starts speaking immediately after greeting.
+
+### Fix
+- Added early no-speech timeout in state-machine path (`3.6s`) to bail quickly into fallback capture instead of waiting full loop timeout.
+- Timeout now triggers on:
+  - stream session unavailable,
+  - repeated empty chunks,
+  - repeated unvoiced chunks before speech start.
+
+### Build/deploy
+- Rebuilt and reinstalled debug APK successfully.
+- Default dialer role still `com.tracsystems.phonebridge`.
