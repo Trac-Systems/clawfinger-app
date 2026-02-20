@@ -396,15 +396,48 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                                 hint = "a${attempt + 1}-${selectedRootCaptureSource?.name ?: "unknown"}",
                             )
                         }
-                        val candidateTranscript = runCatching { callSparkAsr(capture.wav) }
-                            .onFailure { error ->
-                                Log.e(TAG, "spark ASR failed", error)
-                                CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
+                        var candidateAudioWav = capture.wav
+                        val decodedCapture = capture.wav?.let { decodeWavToPcm16Mono(it) }
+                        val adaptiveCandidate = if (decodedCapture != null) {
+                            transcribeUtteranceAdaptive(
+                                pcm = decodedCapture.pcm,
+                                fallbackRate = decodedCapture.sampleRate,
+                            )
+                        } else {
+                            null
+                        }
+                        val candidateTranscript = if (adaptiveCandidate != null) {
+                            candidateAudioWav = adaptiveCandidate.wav
+                            if (decodedCapture != null && adaptiveCandidate.sampleRate != decodedCapture.sampleRate) {
+                                Log.w(
+                                    TAG,
+                                    "fallback ASR adaptive sample-rate selected ${adaptiveCandidate.sampleRate}Hz from ${decodedCapture.sampleRate}Hz score=${adaptiveCandidate.score}",
+                                )
+                                CommandAuditLog.add(
+                                    "voice_bridge:fallback_adaptive_rate:${decodedCapture.sampleRate}->${adaptiveCandidate.sampleRate}:score=${adaptiveCandidate.score}",
+                                )
+                                if (ENABLE_DEBUG_WAV_DUMP) {
+                                    persistDebugWav(
+                                        prefix = "rxa",
+                                        wavBytes = adaptiveCandidate.wav,
+                                        hint = "a${attempt + 1}-sr${adaptiveCandidate.sampleRate}",
+                                    )
+                                }
                             }
-                            .getOrNull()
-                            ?.let { normalizeTranscriptForCall(it) }
-                            ?.trim()
-                            .orEmpty()
+                            adaptiveCandidate.transcript
+                                .let { normalizeTranscriptForCall(it) }
+                                .trim()
+                        } else {
+                            runCatching { callSparkAsr(capture.wav) }
+                                .onFailure { error ->
+                                    Log.e(TAG, "spark ASR failed", error)
+                                    CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
+                                }
+                                .getOrNull()
+                                ?.let { normalizeTranscriptForCall(it) }
+                                ?.trim()
+                                .orEmpty()
+                        }
                         if (candidateTranscript.isBlank()) {
                             Log.w(TAG, "spark ASR transcript empty")
                             lastRejectionReason = "asr_empty"
@@ -434,7 +467,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         pinRootCaptureSource()
                         sameSourceRetries = 0
                         transcriptPreview = candidateTranscript
-                        transcriptAudioWav = capture.wav
+                        transcriptAudioWav = candidateAudioWav
                         transcriptChunkCount = 1
                         if (forceFallbackTurnsRemaining > 0) {
                             forceFallbackTurnsRemaining = (forceFallbackTurnsRemaining - 1).coerceAtLeast(0)

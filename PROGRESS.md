@@ -2780,3 +2780,29 @@ _Last updated: 2026-02-19_
 ### Expected effect
 - Transient live-call state flips no longer permanently silence the conversation.
 - Turn loop retries automatically and should proceed once call-state snapshot stabilizes.
+
+## 2026-02-20 10:20 — Fix high-pitch ASR drift on fallback `rx-*` path
+
+### Observed issue
+- User-reported bad turns were coming from fallback captures (`rx-*`) with high-pitch perception and wrong ASR text (e.g. movie request interpreted as beach intent).
+- State-machine captures (`rxm-*`) were generally better because they already used adaptive ASR sample-rate selection.
+
+### Root cause
+- Fallback path was sending captured WAV to ASR with a single declared sample rate only.
+- When tinycap fallback format/rate did not match true signal cadence, ASR could decode semantically wrong text.
+- Adaptive sample-rate correction existed, but only in state-machine capture path.
+
+### Fix
+- Added adaptive ASR sample-rate selection to fallback path too:
+  - decode fallback WAV to PCM,
+  - run `transcribeUtteranceAdaptive(...)` across rate candidates,
+  - use selected adaptive transcript and corrected WAV for turn submission,
+  - keep single-pass ASR as fallback if adaptive path yields no candidate.
+- Added explicit diagnostics when adaptive rate differs from source WAV rate:
+  - log + audit `voice_bridge:fallback_adaptive_rate:<src>-><selected>:score=<n>`
+  - optional debug WAV dump `rxa-*` for corrected-rate artifact inspection.
+
+### Build/deploy
+- Rebuilt debug APK successfully.
+- Reinstalled and relaunched on Pixel.
+- Default dialer role remains `com.tracsystems.phonebridge`.
