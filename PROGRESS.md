@@ -3317,3 +3317,21 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-20 20:58 — Pre-arm bootstrap: consume tail speech immediately
+
+### What
+- In utterance state-machine fast post-playback mode, added one-time bootstrap from rolling prebuffer before first live voiced chunk:
+  - if prebuffer shows speech (`rms` + `voiced_ms` gates), it immediately seeds the active utterance.
+  - this allows user speech spoken at/just before assistant end to be retained instead of dropped.
+- Added conservative bootstrap thresholds:
+  - `POST_PLAYBACK_PREARM_BOOTSTRAP_MIN_RMS = 12.0`
+  - `POST_PLAYBACK_PREARM_BOOTSTRAP_MIN_VOICED_MS = 80`
+
+### Why
+- Deadzone persisted because pre-armed audio was only appended and still required a new voiced chunk to start speaking state.
+- When user answered immediately and stopped quickly, that first tail speech could be missed.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.

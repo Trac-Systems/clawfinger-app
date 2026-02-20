@@ -740,6 +740,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val captureStartedAtMs = System.currentTimeMillis()
         var sampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
         val fastEndpointMode = System.currentTimeMillis() - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
+        var prearmBootstrapChecked = false
         val updateDerivedThresholds = {
             val preRollMaxBytes = ((sampleRate * UTTERANCE_PRE_ROLL_MS) / 1000) * 2
             val minSpeechSamples = (sampleRate * UTTERANCE_MIN_SPEECH_MS) / 1000
@@ -773,6 +774,29 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (streamSession.effectiveSampleRate != sampleRate) {
                 sampleRate = streamSession.effectiveSampleRate
                 thresholds = updateDerivedThresholds()
+            }
+            if (!speakingNow && fastEndpointMode && !prearmBootstrapChecked) {
+                prearmBootstrapChecked = true
+                val prearmed = consumeRootRollingPrebuffer(sampleRate)
+                if (prearmed.isNotEmpty()) {
+                    val analysis = analyzeCapture(prearmed, sampleRate)
+                    if (
+                        analysis.overallRms >= POST_PLAYBACK_PREARM_BOOTSTRAP_MIN_RMS &&
+                        analysis.voicedMs >= POST_PLAYBACK_PREARM_BOOTSTRAP_MIN_VOICED_MS
+                    ) {
+                        speakingNow = true
+                        current.reset()
+                        current.write(prearmed)
+                        speechSamples = prearmed.size / 2
+                        silenceSamples = 0
+                        chunkCount = max(1, chunkCount)
+                        CommandAuditLog.add(
+                            "voice_bridge:post_playback_prearm_bootstrap:rms=${"%.1f".format(analysis.overallRms)}:voiced=${analysis.voicedMs}",
+                        )
+                    } else {
+                        preRoll = appendAndTrimBytes(preRoll, prearmed, thresholds.preRollMaxBytes)
+                    }
+                }
             }
             val captured = readRootCaptureStreamChunk(streamSession, UTTERANCE_CAPTURE_CHUNK_MS)
             if (captured == null || captured.pcm.size < 2) {
@@ -4052,6 +4076,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val POST_PLAYBACK_PREARM_RETRY_MS = 180L
         private const val POST_PLAYBACK_PREARM_MAX_ATTEMPTS = 4
         private const val POST_PLAYBACK_PREARM_CHUNK_MS = 120
+        private const val POST_PLAYBACK_PREARM_BOOTSTRAP_MIN_RMS = 12.0
+        private const val POST_PLAYBACK_PREARM_BOOTSTRAP_MIN_VOICED_MS = 80
         private const val ROOT_PLAY_START_TIMEOUT_MS = 2_500L
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
         private const val ROOT_ROUTE_RECOVER_THROTTLE_MS = 1_800L
