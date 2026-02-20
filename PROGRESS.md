@@ -2039,6 +2039,25 @@ _Last updated: 2026-02-19_
 - Single utterance should no longer duplicate at start.
 - Debug WAV pitch/speed should align better with natural speech for ASR.
 
+## 2026-02-20 07:44 — Addressed short/empty second-turn captures after first reply
+
+### Trigger
+- User confirmed:
+  - first-turn RX WAV still sounded pitch/speed shifted,
+  - second turn often cut short/empty despite longer spoken input.
+
+### Changes
+- In root stream session setup, decoupled requested stream rate from processing rate:
+  - when device correction applies (`32k -> 16k`), stream processing now uses corrected rate for chunk sizing (`rawSampleRate=processingSampleRate`) to avoid over-reading/compressing windows.
+- Hardened endpointing against premature end-of-turn:
+  - `UTTERANCE_PRE_ROLL_MS: 350 -> 500`
+  - `UTTERANCE_MIN_SPEECH_MS: 260 -> 560`
+  - `UTTERANCE_SILENCE_MS: 560 -> 760`
+
+### Expected effect
+- Less pitch/speed skew from chunk-time misalignment.
+- Fewer empty second turns from short false-start captures.
+
 ## 2026-02-20 05:47 — Rolled back to fast non-streaming call path
 
 ### Why

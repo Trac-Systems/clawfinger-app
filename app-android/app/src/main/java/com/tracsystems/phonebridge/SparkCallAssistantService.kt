@@ -2807,11 +2807,22 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 "root stream sampleRate corrected device=${source.device} from=$requestedRate to=$effectiveSampleRate",
             )
         }
+        val processingSampleRate = if (effectiveSampleRate != requestedRate) {
+            effectiveSampleRate
+        } else {
+            requestedRate
+        }
+        if (processingSampleRate != requestedRate) {
+            Log.w(
+                TAG,
+                "root stream processing rate override device=${source.device} from=$requestedRate to=$processingSampleRate",
+            )
+        }
         return RootCaptureStreamSession(
             fifoFile = fifoFile,
             inputStream = input,
             device = source.device,
-            rawSampleRate = requestedRate,
+            rawSampleRate = processingSampleRate,
             effectiveSampleRate = effectiveSampleRate,
             channels = requestedChannels,
             bitsPerSample = ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE,
@@ -3375,9 +3386,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1700, 2100, 2500)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 380
-        private const val UTTERANCE_PRE_ROLL_MS = 350
-        private const val UTTERANCE_MIN_SPEECH_MS = 260
-        private const val UTTERANCE_SILENCE_MS = 560
+        private const val UTTERANCE_PRE_ROLL_MS = 500
+        private const val UTTERANCE_MIN_SPEECH_MS = 560
+        private const val UTTERANCE_SILENCE_MS = 760
         private const val UTTERANCE_MAX_TURN_MS = 8_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 11_000
         private const val UTTERANCE_VAD_RMS = 120.0
