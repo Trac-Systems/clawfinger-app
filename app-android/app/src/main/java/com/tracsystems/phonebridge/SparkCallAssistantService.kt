@@ -52,6 +52,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var selectedRootCaptureSampleRate: Int? = null
     private var selectedRootCaptureChannels: Int? = null
     private var selectedRootPlaybackDevice: Int? = null
+    private var adaptiveCaptureSampleRate: Int? = null
+    private var adaptiveCaptureRateLocked: Boolean = false
+    private var adaptiveCaptureRateNoInfoStreak: Int = 0
     private var rootCaptureStreamSession: RootCaptureStreamSession? = null
     private var consecutiveNoAudioRejects: Int = 0
     private var enrolledSpeaker: SpeakerFingerprint? = null
@@ -138,6 +141,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             selectedRootCaptureSampleRate = null
             selectedRootCaptureChannels = null
             selectedRootPlaybackDevice = null
+            adaptiveCaptureSampleRate = null
+            adaptiveCaptureRateLocked = false
+            adaptiveCaptureRateNoInfoStreak = 0
             stopRootCaptureStreamSession("service_start_reset")
             consecutiveNoAudioRejects = 0
             enrolledSpeaker = null
@@ -647,30 +653,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } else {
             utterancePcm
         }
-        val utteranceWav = pcm16ToWav(cappedPcm, sampleRate)
+        val adaptiveAsr = transcribeUtteranceAdaptive(cappedPcm, sampleRate) ?: return null
+        val utteranceWav = adaptiveAsr.wav
+        val transcript = adaptiveAsr.transcript
         if (ENABLE_DEBUG_WAV_DUMP) {
             persistDebugWav(
                 prefix = "rxm",
                 wavBytes = utteranceWav,
                 hint = "vad-$chunkCount",
             )
-        }
-        val transcript = runCatching { callSparkAsr(utteranceWav) }
-            .onFailure { error ->
-                Log.e(TAG, "spark ASR state-machine failed", error)
-                CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
-            }
-            .getOrNull()
-            ?.let { normalizeTranscriptForCall(it) }
-            ?.trim()
-            .orEmpty()
-        if (transcript.isBlank()) {
-            return null
-        }
-        val rejectReason = transcriptRejectReason(transcript)
-        if (rejectReason != null && rejectReason != "low_information") {
-            CommandAuditLog.add("voice_bridge:transcript_reject:$rejectReason")
-            return null
         }
         pinRootCaptureSource()
         Log.i(
@@ -2137,68 +2128,98 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             .trim()
     }
 
+    private fun scoreAdaptiveTranscript(transcript: String): Int {
+        val normalized = transcript
+            .replace(Regex("[^A-Za-z0-9]"), "")
+            .trim()
+        if (normalized.isBlank()) {
+            return 0
+        }
+        return 1 + normalized.length.coerceAtMost(64)
+    }
+
+    private fun transcribeUtteranceAdaptive(pcm: ByteArray, fallbackRate: Int): AdaptiveAsrResult? {
+        val candidates = buildList {
+            val locked = adaptiveCaptureSampleRate
+            if (ENABLE_ADAPTIVE_CAPTURE_RATE && locked != null) {
+                add(locked)
+                if (locked != fallbackRate) {
+                    add(fallbackRate)
+                }
+            } else {
+                add(fallbackRate)
+                if (ENABLE_ADAPTIVE_CAPTURE_RATE && !adaptiveCaptureRateLocked) {
+                    ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES.forEach { rate ->
+                        if (!contains(rate)) {
+                            add(rate)
+                        }
+                    }
+                }
+            }
+        }
+
+        var best: AdaptiveAsrResult? = null
+        var attempts = 0
+        for (rate in candidates) {
+            val wav = pcm16ToWav(pcm, rate)
+            val transcript = runCatching { callSparkAsr(wav) }
+                .onFailure { error ->
+                    Log.e(TAG, "spark ASR adaptive failed", error)
+                    CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
+                }
+                .getOrNull()
+                ?.let { normalizeTranscriptForCall(it) }
+                ?.trim()
+                .orEmpty()
+            attempts += 1
+            val score = scoreAdaptiveTranscript(transcript)
+            val candidate = AdaptiveAsrResult(
+                transcript = transcript,
+                wav = wav,
+                sampleRate = rate,
+                score = score,
+                attempts = attempts,
+            )
+            if (best == null || candidate.score > best!!.score) {
+                best = candidate
+            }
+        }
+
+        val selected = best ?: return null
+        if (selected.score <= 0) {
+            adaptiveCaptureRateNoInfoStreak += 1
+            CommandAuditLog.add("voice_bridge:adaptive_rate_noinfo:$adaptiveCaptureRateNoInfoStreak")
+            if (ENABLE_ADAPTIVE_CAPTURE_RATE && adaptiveCaptureRateLocked && adaptiveCaptureRateNoInfoStreak >= ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK) {
+                adaptiveCaptureRateLocked = false
+                adaptiveCaptureSampleRate = null
+                selectedRootCaptureSampleRate = null
+                stopRootCaptureStreamSession("adaptive_rate_unlock:noinfo")
+                CommandAuditLog.add("voice_bridge:adaptive_rate_unlock:noinfo")
+            }
+            return null
+        }
+
+        adaptiveCaptureRateNoInfoStreak = 0
+        if (ENABLE_ADAPTIVE_CAPTURE_RATE && !adaptiveCaptureRateLocked && selected.score >= ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE) {
+            adaptiveCaptureSampleRate = selected.sampleRate
+            adaptiveCaptureRateLocked = true
+            selectedRootCaptureSampleRate = selected.sampleRate
+            CommandAuditLog.add("voice_bridge:adaptive_rate_lock:${selected.sampleRate}:score=${selected.score}:attempts=${selected.attempts}")
+            if (selected.sampleRate != fallbackRate) {
+                stopRootCaptureStreamSession("adaptive_rate_lock:${selected.sampleRate}")
+            }
+        }
+
+        return selected
+    }
+
     private fun transcriptRejectReason(transcript: String): String? {
         val normalized = transcript
             .lowercase(Locale.US)
             .replace(Regex("[^a-z0-9\\s']"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
-        if (normalized.isBlank()) {
-            return "empty_normalized"
-        }
-        val alphaNumCount = normalized.count { it.isLetterOrDigit() }
-        if (alphaNumCount < MIN_TRANSCRIPT_ALNUM_CHARS) {
-            return "short_alnum"
-        }
-        val tokens = normalized.split(" ").filter { it.length >= 2 }
-        if (tokens.isEmpty()) {
-            return "no_tokens"
-        }
-        if (tokens.size <= LOW_INFORMATION_MAX_TOKENS) {
-            val informativeTokens = tokens.filterNot { LOW_INFORMATION_TOKENS.contains(it) }
-            if (informativeTokens.isEmpty()) {
-                return "low_information"
-            }
-        }
-        val uniqueRatio = tokens.toSet().size.toDouble() / tokens.size.toDouble()
-        if (tokens.size >= MIN_TRANSCRIPT_TOKEN_COUNT && uniqueRatio < MIN_TRANSCRIPT_UNIQUE_RATIO) {
-            return "low_unique_ratio"
-        }
-        val condensed = tokens.joinToString(" ")
-        if (LOW_QUALITY_TRANSCRIPT_PATTERNS.any { pattern -> pattern.matches(condensed) }) {
-            return "pattern_match"
-        }
-        val lettersOnly = normalized.filter { it in 'a'..'z' }
-        if (lettersOnly.length >= 8) {
-            val maxCount = lettersOnly
-                .groupingBy { it }
-                .eachCount()
-                .values
-                .maxOrNull() ?: 0
-            val dominantRatio = maxCount.toDouble() / lettersOnly.length.toDouble()
-            if (dominantRatio >= 0.78) {
-                return "dominant_char"
-            }
-        }
-        if (lastAssistantReplyText.isNotBlank()) {
-            val assistantTokens = lastAssistantReplyText
-                .lowercase(Locale.US)
-                .replace(Regex("[^a-z0-9\\s']"), " ")
-                .replace(Regex("\\s+"), " ")
-                .trim()
-                .split(" ")
-                .filter { it.length >= 2 }
-                .toSet()
-            val transcriptTokens = tokens.toSet()
-            if (assistantTokens.isNotEmpty() && transcriptTokens.isNotEmpty()) {
-                val overlap = assistantTokens.intersect(transcriptTokens).size.toDouble() /
-                    assistantTokens.union(transcriptTokens).size.toDouble()
-                if (overlap >= TRANSCRIPT_ECHO_OVERLAP_THRESHOLD) {
-                    return "assistant_echo_overlap"
-                }
-            }
-        }
-        return null
+        return if (normalized.isBlank()) "empty_normalized" else null
     }
 
     private fun sanitizeReply(input: String): String {
@@ -2257,6 +2278,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val transcript: String,
         val audioWav: ByteArray,
         val chunkCount: Int,
+    )
+
+    private data class AdaptiveAsrResult(
+        val transcript: String,
+        val wav: ByteArray,
+        val sampleRate: Int,
+        val score: Int,
+        val attempts: Int,
     )
 
     private data class EndpointThresholds(
@@ -2755,7 +2784,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             return existing
         }
         stopRootCaptureStreamSession("capture_stream_rebind")
-        val preferredRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+        val preferredRate = adaptiveCaptureSampleRate
+            ?: selectedRootCaptureSampleRate
+            ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
         val preferredChannels = selectedRootCaptureChannels ?: ROOT_CAPTURE_PRIMARY_CHANNELS
         val started = startRootTinycapStreamSession(
             source = source,
@@ -3351,10 +3382,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
         private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(32_000, 24_000, 16_000, 8_000)
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
-        private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
+        private const val ROOT_CAPTURE_RATE_FIX_ENABLED = false
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
         private const val ROOT_CAPTURE_RATE_FIX_TO = 16_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
+        private const val ENABLE_ADAPTIVE_CAPTURE_RATE = true
+        private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 2
+        private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
+        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(16_000, 24_000, 32_000, 12_000, 8_000)
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
         private const val KEEP_CALL_MUTED_DURING_TTS = true

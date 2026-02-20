@@ -2058,6 +2058,28 @@ _Last updated: 2026-02-19_
 - Less pitch/speed skew from chunk-time misalignment.
 - Fewer empty second turns from short false-start captures.
 
+## 2026-02-20 07:52 — Applied "low-information is valid" and adaptive per-call rate lock
+
+### Trigger
+- User explicitly requested:
+  - do not reject low-information transcripts,
+  - stop static pitch guessing and adapt rate per call.
+
+### Changes
+- Removed semantic transcript rejection behavior:
+  - `transcriptRejectReason()` now only rejects truly empty normalized text.
+- Added adaptive ASR rate selection for utterance state-machine path:
+  - tries candidate sample-rate interpretations on the same utterance PCM,
+  - scores by non-empty alnum content only (no semantic/pattern heuristics),
+  - locks best rate per call (`adaptiveCaptureSampleRate`), then reuses it.
+- Added unlock-on-no-info guard:
+  - after repeated no-info turns, adaptive lock resets and stream session is rebound.
+- Disabled static global capture rate remap:
+  - `ROOT_CAPTURE_RATE_FIX_ENABLED=false` (no hardcoded 32k->X remap).
+
+### Notes
+- This enforces the requested rule: only “no information” is invalid; everything else is allowed.
+
 ## 2026-02-20 05:47 — Rolled back to fast non-streaming call path
 
 ### Why
