@@ -297,6 +297,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             var transcriptPreview = ""
             var transcriptAudioWav: ByteArray? = null
+            var transcriptChunkCount = 0
             var lastRejectionReason: String? = null
             var sameSourceRetries = 0
             repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
@@ -392,6 +393,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 sameSourceRetries = 0
                 transcriptPreview = candidateTranscript
                 transcriptAudioWav = capture.wav
+                transcriptChunkCount = 1
             }
             if (transcriptPreview.isBlank()) {
                 val clarificationSpoken = maybeSpeakClarification(lastRejectionReason)
@@ -405,6 +407,27 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     startCaptureLoop(retryDelay)
                 }
                 return@execute
+            }
+            val seedAudio = transcriptAudioWav ?: buildSilenceWav(320)
+            val assembledUtterance = if (ENABLE_UTTERANCE_CONTINUATION && shouldCollectContinuation(transcriptPreview)) {
+                assembleUtteranceContinuation(
+                    seedTranscript = transcriptPreview,
+                    seedAudioWav = seedAudio,
+                    seedChunkCount = transcriptChunkCount,
+                )
+            } else {
+                AssembledUtterance(
+                    transcript = transcriptPreview,
+                    audioWav = seedAudio,
+                    chunkCount = max(1, transcriptChunkCount),
+                )
+            }
+            transcriptPreview = assembledUtterance.transcript
+            transcriptAudioWav = assembledUtterance.audioWav
+            transcriptChunkCount = assembledUtterance.chunkCount
+            if (transcriptChunkCount > 1) {
+                Log.i(TAG, "assembled utterance chunks=$transcriptChunkCount transcript=${transcriptPreview.take(140)}")
+                CommandAuditLog.add("voice_bridge:utterance_chunks:$transcriptChunkCount")
             }
             val response = runCatching {
                 callSparkTurn(
@@ -495,6 +518,159 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             requestReplyFromAudioFallback()
         }, delayMs)
+    }
+
+    private fun shouldCollectContinuation(transcript: String): Boolean {
+        val trimmed = transcript.trim()
+        if (trimmed.isBlank()) {
+            return false
+        }
+        val terminal = trimmed.endsWith(".") || trimmed.endsWith("!") || trimmed.endsWith("?")
+        if (!terminal) {
+            return true
+        }
+        val tokenCount = trimmed.split(Regex("\\s+")).count { it.isNotBlank() }
+        return tokenCount <= UTTERANCE_TERMINAL_MIN_TOKEN_COUNT
+    }
+
+    private fun assembleUtteranceContinuation(
+        seedTranscript: String,
+        seedAudioWav: ByteArray,
+        seedChunkCount: Int,
+    ): AssembledUtterance {
+        var mergedTranscript = seedTranscript.trim()
+        var mergedAudioWav = seedAudioWav
+        var chunkCount = max(1, seedChunkCount)
+        var boundaryWindows = 0
+        for (windowIndex in 0 until MAX_UTTERANCE_CONTINUATION_WINDOWS) {
+            if (!InCallStateHolder.hasLiveCall()) {
+                break
+            }
+            val capture = captureFallbackAudio(
+                durationMs = UTTERANCE_CONTINUATION_CAPTURE_MS,
+                stickToSelectedSource = true,
+            )
+            if (capture.wav == null) {
+                val reason = capture.rejectionReason ?: "empty"
+                if (reason == "no_audio_source") {
+                    consecutiveNoAudioRejects += 1
+                    maybeRecoverRootRoute()
+                } else {
+                    consecutiveNoAudioRejects = 0
+                }
+                boundaryWindows += 1
+                Log.i(
+                    TAG,
+                    "utterance continuation boundary capture reason=$reason window=${windowIndex + 1} boundary=$boundaryWindows/$UTTERANCE_END_BOUNDARY_WINDOWS",
+                )
+                if (boundaryWindows >= UTTERANCE_END_BOUNDARY_WINDOWS) {
+                    break
+                }
+                continue
+            }
+            consecutiveNoAudioRejects = 0
+            capture.analysis?.let { maybeEnrollSpeaker(it) }
+            if (ENABLE_DEBUG_WAV_DUMP) {
+                persistDebugWav(
+                    prefix = "rxu",
+                    wavBytes = capture.wav,
+                    hint = "c${windowIndex + 1}-${selectedRootCaptureSource?.name ?: "unknown"}",
+                )
+            }
+            val continuationTranscript = runCatching { callSparkAsr(capture.wav) }
+                .onFailure { error ->
+                    Log.e(TAG, "spark ASR continuation failed", error)
+                    CommandAuditLog.add("voice_bridge:asr_cont_error:${error.message}")
+                }
+                .getOrNull()
+                ?.trim()
+                .orEmpty()
+            if (continuationTranscript.isBlank()) {
+                boundaryWindows += 1
+                Log.i(
+                    TAG,
+                    "utterance continuation boundary transcript=empty window=${windowIndex + 1} boundary=$boundaryWindows/$UTTERANCE_END_BOUNDARY_WINDOWS",
+                )
+                if (boundaryWindows >= UTTERANCE_END_BOUNDARY_WINDOWS) {
+                    break
+                }
+                continue
+            }
+            val rejectReason = transcriptRejectReason(continuationTranscript)
+            if (rejectReason != null && rejectReason != "low_information") {
+                CommandAuditLog.add("voice_bridge:transcript_reject_cont:$rejectReason")
+                boundaryWindows += 1
+                Log.i(
+                    TAG,
+                    "utterance continuation rejected reason=$rejectReason window=${windowIndex + 1} boundary=$boundaryWindows/$UTTERANCE_END_BOUNDARY_WINDOWS transcript=${continuationTranscript.take(96)}",
+                )
+                if (boundaryWindows >= UTTERANCE_END_BOUNDARY_WINDOWS) {
+                    break
+                }
+                continue
+            }
+            if (rejectReason == "low_information") {
+                CommandAuditLog.add("voice_bridge:transcript_reject_cont_soft:low_information")
+            }
+            boundaryWindows = 0
+            pinRootCaptureSource()
+            mergedTranscript = appendTranscriptSegment(mergedTranscript, continuationTranscript)
+            mergedAudioWav = mergeWavSegments(mergedAudioWav, capture.wav) ?: mergedAudioWav
+            chunkCount += 1
+            CommandAuditLog.add("voice_bridge:asr_cont:${continuationTranscript.take(96)}")
+            if (chunkCount >= MAX_UTTERANCE_CHUNKS_PER_TURN) {
+                break
+            }
+        }
+        return AssembledUtterance(
+            transcript = mergedTranscript,
+            audioWav = mergedAudioWav,
+            chunkCount = chunkCount,
+        )
+    }
+
+    private fun appendTranscriptSegment(current: String, next: String): String {
+        val left = current.trim()
+        val right = next.trim()
+        if (left.isBlank()) {
+            return right
+        }
+        if (right.isBlank()) {
+            return left
+        }
+        val separator = if (right.firstOrNull() in setOf(',', '.', '!', '?', ';', ':')) "" else " "
+        return "$left$separator$right"
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun mergeWavSegments(baseWav: ByteArray, nextWav: ByteArray): ByteArray? {
+        val baseDecoded = decodeWavToPcm16Mono(baseWav) ?: return null
+        val nextDecoded = decodeWavToPcm16Mono(nextWav) ?: return null
+        val sampleRate = baseDecoded.sampleRate.takeIf { it > 0 }
+            ?: nextDecoded.sampleRate.takeIf { it > 0 }
+            ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+        val basePcm = if (baseDecoded.sampleRate == sampleRate) {
+            baseDecoded.pcm
+        } else {
+            resamplePcm16Mono(baseDecoded.pcm, baseDecoded.sampleRate, sampleRate)
+        }
+        val nextPcm = if (nextDecoded.sampleRate == sampleRate) {
+            nextDecoded.pcm
+        } else {
+            resamplePcm16Mono(nextDecoded.pcm, nextDecoded.sampleRate, sampleRate)
+        }
+        val mergedPcm = ByteArrayOutputStream(basePcm.size + nextPcm.size).apply {
+            write(basePcm)
+            write(nextPcm)
+        }.toByteArray()
+        val maxBytes = ((sampleRate * MAX_UTTERANCE_MERGED_AUDIO_MS) / 1000) * 2
+        val cappedPcm = if (mergedPcm.size > maxBytes) {
+            mergedPcm.copyOfRange(mergedPcm.size - maxBytes, mergedPcm.size)
+        } else {
+            mergedPcm
+        }
+        return pcm16ToWav(cappedPcm, sampleRate)
     }
 
     private fun captureFallbackAudio(
@@ -1877,6 +2053,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val pid: Int,
     )
 
+    private data class AssembledUtterance(
+        val transcript: String,
+        val audioWav: ByteArray,
+        val chunkCount: Int,
+    )
+
     private data class CaptureResult(
         val wav: ByteArray? = null,
         val analysis: CaptureAnalysis? = null,
@@ -2758,6 +2940,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
+        private const val ENABLE_UTTERANCE_CONTINUATION = true
+        private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 920
+        private const val MAX_UTTERANCE_CONTINUATION_WINDOWS = 3
+        private const val UTTERANCE_END_BOUNDARY_WINDOWS = 1
+        private const val MAX_UTTERANCE_CHUNKS_PER_TURN = 4
+        private const val MAX_UTTERANCE_MERGED_AUDIO_MS = 9_500
+        private const val UTTERANCE_TERMINAL_MIN_TOKEN_COUNT = 8
         private const val MAX_SAME_SOURCE_RETRIES = 2
         private const val ENABLE_DEBUG_WAV_DUMP = true
         private const val DEBUG_WAV_DIR_NAME = "voice-debug"

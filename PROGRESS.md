@@ -2220,3 +2220,25 @@ _Last updated: 2026-02-19_
 
 ### Note
 - This is for diagnostics; once enough comparison artifacts are collected, it should be disabled again.
+
+## 2026-02-20 07:31 — Added sentence-complete utterance assembly (barge-in still off)
+
+### Why
+- User requested to stop hard mid-sentence chunking and keep barge-in disabled.
+- Current fallback path sent each accepted chunk as an immediate model turn, which split one spoken sentence into multiple turns.
+
+### Changes
+- Added turn-level utterance continuation assembly in `SparkCallAssistantService`:
+  - keeps first accepted chunk as seed,
+  - captures up to 3 short continuation windows (`920ms`) on the same source,
+  - appends accepted continuation transcripts/audio into one merged turn payload,
+  - ends utterance after a boundary window (silence/invalid continuation),
+  - caps merged utterance audio length (`9500ms`) to avoid oversized payloads.
+- Added transcript join logic that preserves punctuation boundaries.
+- Added debug WAV prefix `rxu-*` for continuation segments.
+- Kept interruption path disabled:
+  - `ENABLE_BARGE_IN_INTERRUPT = false`
+
+### Deploy
+- Rebuilt debug APK successfully.
+- Reinstalled on device via `scripts/android-install-debug.sh`.
