@@ -3378,7 +3378,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_MIN_CAPTURE_RMS = 6.0
         private const val ROOT_MIN_ACCEPT_RMS = 26.0
         private const val ROOT_MIN_ACCEPT_VOICED_MS = 180
-        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 32_000
+        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 24_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
         private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
         private const val ROOT_CAPTURE_PRECISE_PADDING_MS = 220
@@ -3406,7 +3406,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_ADAPTIVE_CAPTURE_RATE = true
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
-        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(32_000, 24_000, 16_000)
+        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(24_000, 32_000, 16_000)
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
         private const val KEEP_CALL_MUTED_DURING_TTS = true

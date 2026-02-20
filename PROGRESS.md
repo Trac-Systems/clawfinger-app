@@ -2105,6 +2105,21 @@ _Last updated: 2026-02-19_
 - Prevent lock onto pathological low-rate interpretations.
 - Reduce slow/low-pitch artifacts from wrong per-call rate selection.
 
+## 2026-02-20 08:02 — Set 24k as primary capture interpretation baseline
+
+### Trigger
+- User confirmed from local listening tests that 24k reinterpretation is closest to real voice.
+
+### Changes
+- Set primary capture request rate to 24k:
+  - `ROOT_CAPTURE_REQUEST_SAMPLE_RATE: 32000 -> 24000`
+- Reordered adaptive candidate preference to start with 24k:
+  - `ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES: [24000, 32000, 16000]`
+
+### Intent
+- Reduce first-turn rate mismatch before adaptive lock settles.
+- Keep adaptive fallback available while biasing toward user-validated pitch.
+
 ## 2026-02-20 05:47 — Rolled back to fast non-streaming call path
 
 ### Why
