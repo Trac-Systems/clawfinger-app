@@ -2879,7 +2879,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_SPEAKER_SIMILARITY = 0.52
         private const val FRAME_MS = 20
         private const val CLARIFICATION_COOLDOWN_MS = 2_800L
-        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 180L
+        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 60L
         private const val LISTEN_SPEAKER_VOLUME_FRACTION = 0.45
         private const val TTS_SPEAKER_VOLUME_FRACTION = 0.80
         private const val PROBE_CAPTURE_MS = 480
@@ -2900,11 +2900,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_PRECISE_EXTRA_SECONDS = 1
         private const val MIN_ROOT_RAW_CAPTURE_BYTES = 320
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
-        private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 600
-        private const val ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS = 220
+        private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 900
+        private const val ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS = 320
         private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 100
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
-        private const val ROOT_CAPTURE_MAX_MERGED_MS = 4_200
+        private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
         private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(32_000, 24_000, 16_000, 8_000)
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
         private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
@@ -2941,9 +2941,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
         private const val ENABLE_UTTERANCE_CONTINUATION = true
-        private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 920
-        private const val MAX_UTTERANCE_CONTINUATION_WINDOWS = 3
-        private const val UTTERANCE_END_BOUNDARY_WINDOWS = 1
+        private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 1_200
+        private const val MAX_UTTERANCE_CONTINUATION_WINDOWS = 4
+        private const val UTTERANCE_END_BOUNDARY_WINDOWS = 2
         private const val MAX_UTTERANCE_CHUNKS_PER_TURN = 4
         private const val MAX_UTTERANCE_MERGED_AUDIO_MS = 9_500
         private const val UTTERANCE_TERMINAL_MIN_TOKEN_COUNT = 8

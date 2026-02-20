@@ -2275,3 +2275,23 @@ _Last updated: 2026-02-19_
 - Turn progression reached active and generated 4 reply turns.
 - Between turns, repeated `no_audio_source` occurred before successful attempt-3 captures.
 - Utterance continuation window usually ended immediately with boundary (`no_audio_source`), so no multi-chunk merge happened in this call.
+
+## 2026-02-20 07:38 — Clipping mitigation pass (head/tail capture + utterance boundary)
+
+### Trigger
+- User reported RX WAV clipping at both boundaries (e.g. missing start/end of sentence).
+
+### Tuning changes
+- Reduced post-playback listen delay to start capture earlier after assistant speech:
+  - `POST_PLAYBACK_CAPTURE_DELAY_MS: 180 -> 60`
+- Increased tail protection on root capture:
+  - `ROOT_CAPTURE_TRAILING_EXTENSION_MS: 600 -> 900`
+  - `ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS: 220 -> 320`
+  - `ROOT_CAPTURE_MAX_MERGED_MS: 4200 -> 5200`
+- Made utterance continuation less eager to close on one missed window:
+  - `UTTERANCE_CONTINUATION_CAPTURE_MS: 920 -> 1200`
+  - `MAX_UTTERANCE_CONTINUATION_WINDOWS: 3 -> 4`
+  - `UTTERANCE_END_BOUNDARY_WINDOWS: 1 -> 2`
+
+### Deploy
+- Rebuilt and reinstalled debug APK successfully.
