@@ -2563,3 +2563,65 @@ _Last updated: 2026-02-19_
 - Replay artifacts persisted under latest `phone/debug-wavs/autotest-*` folder:
   - `autonomous-replay.txt` (ASR vs skip/server turn behavior)
   - `autonomous-gating-eval.txt` (rule outcome summary)
+
+## 2026-02-20 08:45 — Added autonomous web-audio stress harness (no pickup loop)
+
+### Goal
+- Continue validation without operator pickup calls.
+- Use externally sourced speech audio and long-stream simulation to stress the root-stream utterance capture logic.
+
+### Added tooling
+- `scripts/build-web-audio-corpus.sh`
+  - downloads web speech samples:
+    - OpenAI Whisper test audio (`jfk.flac`)
+    - Uberi speech_recognition example (`english.wav`)
+    - Hugging Face `Narsil/asr_dummy` speech assets (`mlk.flac`, `canterville.ogg`, `i-know-kung-fu.mp3`)
+  - normalizes to `16kHz mono PCM16 WAV`
+  - builds long stress fixtures:
+    - `canterville-35s-16k.wav`
+    - `canterville-120s-16k.wav`
+    - `stream-mix-120s-16k.wav` (speech + silence cadence)
+- `scripts/simulate-stream-capture.mjs`
+  - simulates `captureUtteranceStateMachine()` behavior on WAV streams:
+    - chunking, pre-roll, VAD threshold, silence endpoint, max-turn timeout.
+  - emits:
+    - per-turn WAV dumps,
+    - JSON summary,
+    - markdown report with clipping/coverage warnings.
+  - supports parameter overrides for fast tuning loops.
+
+### Baseline findings (pre-tune)
+- Default 8s cap split long spoken turns (e.g., 11–13s speech clips) and produced avoidable continuation segmentation.
+
+## 2026-02-20 08:58 — Tuned long-turn capture for full-utterance retention
+
+### Android parameter changes
+- Increased utterance ceiling/time budget:
+  - `UTTERANCE_MAX_TURN_MS: 8000 -> 14000`
+  - `UTTERANCE_LOOP_TIMEOUT_MS: 11000 -> 18000`
+- Kept low-latency endpointing thresholds unchanged:
+  - `UTTERANCE_CAPTURE_CHUNK_MS = 260`
+  - `UTTERANCE_PRE_ROLL_MS = 640`
+  - `UTTERANCE_MIN_SPEECH_MS = 260`
+  - `UTTERANCE_SILENCE_MS = 760`
+
+### Simulation outcomes (after tune)
+- `debug-wavs/stream-sim-web-tuned/summary.json`:
+  - `jfk-16k.wav` (11s): captured in one turn, no clipping warnings.
+  - `mlk-16k.wav` (13s): captured in one turn, no clipping warnings.
+  - `stream-mix-120s-16k.wav`: no clipping warnings on simulated turns.
+
+### Model replay validation on tuned turn WAVs
+- Replay log: `debug-wavs/stream-sim-web-tuned/model-replay.txt`
+  - 12–14s input turn WAVs transcribe correctly on Spark gateway ASR.
+  - `skip_asr=true` turn path returns coherent replies.
+- Server-ASR path check: `debug-wavs/stream-sim-web-tuned/model-replay-server-asr.txt`
+  - `skip_asr=false` with audio-only 11–14s turns succeeds.
+  - ASR source reports `filtered/raw` with correct transcripts.
+
+### Build/test/deploy
+- Rebuilt and installed debug APK after tuning.
+- Test suite remains green:
+  - `npm run test:unit`
+  - `npm run test:integration`
+  - `npm run test:e2e-sim`

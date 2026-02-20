@@ -3496,8 +3496,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_PRE_ROLL_MS = 640
         private const val UTTERANCE_MIN_SPEECH_MS = 260
         private const val UTTERANCE_SILENCE_MS = 760
-        private const val UTTERANCE_MAX_TURN_MS = 8_000
-        private const val UTTERANCE_LOOP_TIMEOUT_MS = 11_000
+        private const val UTTERANCE_MAX_TURN_MS = 14_000
+        private const val UTTERANCE_LOOP_TIMEOUT_MS = 18_000
         private const val UTTERANCE_VAD_RMS = 120.0
         private const val ENABLE_UTTERANCE_CONTINUATION = false
         private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 900
