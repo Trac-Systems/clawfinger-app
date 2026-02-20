@@ -1723,6 +1723,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     pid = pid,
                     device = device,
                     timeoutMs = playbackTimeoutMs,
+                    expectedDurationMs = playbackDurationMs,
                     replyTextForEcho = replyTextForEcho,
                 )
                 if (playbackResult.played || playbackResult.interrupted) {
@@ -1773,10 +1774,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         pid: Int,
         device: Int,
         timeoutMs: Long,
+        expectedDurationMs: Long,
         replyTextForEcho: String?,
     ): RootPlaybackResult {
         val startedAt = System.currentTimeMillis()
         val deadline = startedAt + timeoutMs
+        val expectedStopAt = if (expectedDurationMs > 0) {
+            startedAt + expectedDurationMs + PLAYBACK_STUCK_GRACE_MS
+        } else {
+            Long.MAX_VALUE
+        }
         var nextProbeAt = startedAt + BARGE_IN_ARM_DELAY_MS
         while (System.currentTimeMillis() < deadline) {
             if (!InCallStateHolder.hasLiveCall()) {
@@ -1786,6 +1793,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (!isRootProcessAlive(pid)) {
                 Log.i(TAG, "root tinyplay ok device=$device")
                 markSpeechActivity("root_playback:$device")
+                return RootPlaybackResult(played = true, interrupted = false)
+            }
+            if (System.currentTimeMillis() >= expectedStopAt) {
+                stopRootPlaybackProcess(pid)
+                Log.i(TAG, "root tinyplay forced-stop at expected end device=$device")
+                markSpeechActivity("root_playback_forced:$device")
                 return RootPlaybackResult(played = true, interrupted = false)
             }
             if (ENABLE_BARGE_IN_INTERRUPT) {
@@ -2937,6 +2950,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     pid = liveSession!!.pid,
                     device = liveSession!!.device,
                     timeoutMs = timeoutMs,
+                    expectedDurationMs = durationMs,
                     replyTextForEcho = parsedReply.ifBlank { null },
                 )
             } else {
@@ -3745,7 +3759,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_SPEAKER_SIMILARITY = 0.52
         private const val FRAME_MS = 20
         private const val CLARIFICATION_COOLDOWN_MS = 2_800L
-        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 20L
+        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 0L
         private const val LISTEN_SPEAKER_VOLUME_FRACTION = 0.45
         private const val TTS_SPEAKER_VOLUME_FRACTION = 0.80
         private const val PROBE_CAPTURE_MS = 480
@@ -3801,9 +3815,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_TINYCAP_BIN = "/data/adb/service.d/phonebridge-tinycap"
         private const val ROOT_TINYPLAY_BIN = "/data/adb/service.d/phonebridge-tinyplay"
         private const val ROOT_TINYMIX_BIN = "/data/adb/service.d/phonebridge-tinymix"
-        private const val ROOT_PLAY_TIMEOUT_MIN_MS = 4_000L
+        private const val ROOT_PLAY_TIMEOUT_MIN_MS = 1_200L
         private const val ROOT_PLAY_TIMEOUT_MAX_MS = 20_000L
-        private const val ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 2_500L
+        private const val ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 500L
+        private const val PLAYBACK_STUCK_GRACE_MS = 350L
         private const val ROOT_PLAY_START_TIMEOUT_MS = 2_500L
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
         private const val ROOT_ROUTE_RECOVER_THROTTLE_MS = 1_800L

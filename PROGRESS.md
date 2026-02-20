@@ -3086,3 +3086,30 @@ _Last updated: 2026-02-19_
 1. Rebuild/install and run live call.
 2. Pull latest-only artifacts.
 3. Verify: immediate follow-up accepted, no duplicate loud replay.
+
+## 2026-02-20 15:45 — Hangup robustness + sub-500ms post-reply listen target
+
+### What
+- Strengthened call teardown handling:
+  - `BridgeInCallService` now tracks fallback call when one call is removed (`currentCall` is reassigned to another tracked call if present).
+  - Added `disconnectAllCalls()` on service/state holder and used it from hangup command.
+  - Added dial guard in `AndroidTelecomController.dial()` to block redial when any call is already in progress (`TelecomManager.isInCall` / tracked/live call).
+- Reduced post-reply dead-zone in root playback path:
+  - `POST_PLAYBACK_CAPTURE_DELAY_MS = 0`
+  - `ROOT_PLAY_TIMEOUT_MIN_MS = 1200`
+  - `ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 500`
+  - Added forced-stop at expected playback end (`expectedDurationMs + PLAYBACK_STUCK_GRACE_MS`) so stale tinyplay PIDs do not block listening.
+
+### Why
+- User observed stale active/held calls after remote side ended and suspected hangup detection regression.
+- User requires listen readiness within ~500ms after assistant finishes speaking.
+
+### Result
+- Hangup path no longer depends on a single `currentCall` reference.
+- Duplicate dial stacking while already in-call is blocked.
+- Playback monitor now transitions to capture quickly even if tinyplay process lingers.
+
+### Next
+1. Rebuild/install APK.
+2. Test with original `...5779` number.
+3. Validate immediate follow-up response window and remote-hangup cleanup.
