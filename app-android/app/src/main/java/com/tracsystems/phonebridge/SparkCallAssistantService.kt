@@ -2879,7 +2879,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_SPEAKER_SIMILARITY = 0.52
         private const val FRAME_MS = 20
         private const val CLARIFICATION_COOLDOWN_MS = 2_800L
-        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 60L
+        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 140L
         private const val LISTEN_SPEAKER_VOLUME_FRACTION = 0.45
         private const val TTS_SPEAKER_VOLUME_FRACTION = 0.80
         private const val PROBE_CAPTURE_MS = 480
@@ -2939,7 +2939,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_MIN_ALNUM_CHARS = 2
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
-        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1500, 1900, 2300)
+        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1700, 2100, 2500)
         private const val ENABLE_UTTERANCE_CONTINUATION = true
         private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 900
         private const val MAX_UTTERANCE_CONTINUATION_WINDOWS = 2

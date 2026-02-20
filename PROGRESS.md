@@ -2322,3 +2322,17 @@ _Last updated: 2026-02-19_
 
 ### Deploy
 - Rebuilt + reinstalled debug APK successfully.
+
+## 2026-02-20 07:43 — Handover timing correction for clipped turn starts
+
+### Trigger
+- User reported phrase-level head clipping (e.g. `can you recommend me a good movie` becoming `...ood movie`).
+
+### Adjustment
+- Moved post-playback recapture out of the too-early unstable handover window:
+  - `POST_PLAYBACK_CAPTURE_DELAY_MS: 60 -> 140`
+- Slightly widened capture windows to preserve sentence boundaries once capture starts:
+  - `CAPTURE_DURATION_BY_ATTEMPT_MS: 1500/1900/2300 -> 1700/2100/2500`
+
+### Deploy
+- Rebuilt + reinstalled debug APK successfully.
