@@ -3227,3 +3227,19 @@ _Last updated: 2026-02-19_
 ### Expected effect
 - User can speak over assistant with faster interruption takeover.
 - Fewer forced repeats right after assistant speech.
+
+## 2026-02-20 20:00 — Barge-in switched to energy-only interrupt path
+
+### What
+- Added `BARGE_IN_ENERGY_ONLY_MODE = true` in call playback interrupt detection.
+- When enabled, barge-in triggers purely from energy/voiced thresholds:
+  - `BARGE_IN_ENERGY_ONLY_MIN_RMS = 24.0`
+  - `BARGE_IN_ENERGY_ONLY_MIN_VOICED_MS = 80`
+- ASR-based probe path is bypassed in this mode.
+
+### Why
+- User reported that interruption worked only in early turns and became inconsistent later.
+- ASR probe path can reject valid overlap speech as echo/low-confidence during long sessions.
+
+### Revert path
+- Single-flag rollback: set `BARGE_IN_ENERGY_ONLY_MODE = false`.

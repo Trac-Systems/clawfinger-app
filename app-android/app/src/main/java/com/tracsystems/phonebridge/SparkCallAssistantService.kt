@@ -1887,6 +1887,18 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (analysis.overallRms < BARGE_IN_MIN_RMS || analysis.voicedMs < BARGE_IN_MIN_VOICED_MS) {
             return false
         }
+        if (BARGE_IN_ENERGY_ONLY_MODE) {
+            if (
+                analysis.overallRms >= BARGE_IN_ENERGY_ONLY_MIN_RMS &&
+                analysis.voicedMs >= BARGE_IN_ENERGY_ONLY_MIN_VOICED_MS
+            ) {
+                CommandAuditLog.add(
+                    "voice_bridge:barge_in_energy_only:rms=${"%.1f".format(analysis.overallRms)}:voiced=${analysis.voicedMs}",
+                )
+                return true
+            }
+            return false
+        }
         if (analysis.overallRms >= BARGE_IN_STRONG_RMS && analysis.voicedMs >= BARGE_IN_STRONG_VOICED_MS) {
             CommandAuditLog.add(
                 "voice_bridge:barge_in_energy:rms=${"%.1f".format(analysis.overallRms)}:voiced=${analysis.voicedMs}",
@@ -3935,6 +3947,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_MIN_VOICED_MS = 60
         private const val BARGE_IN_STRONG_RMS = 28.0
         private const val BARGE_IN_STRONG_VOICED_MS = 100
+        private const val BARGE_IN_ENERGY_ONLY_MODE = true
+        private const val BARGE_IN_ENERGY_ONLY_MIN_RMS = 24.0
+        private const val BARGE_IN_ENERGY_ONLY_MIN_VOICED_MS = 80
         private const val BARGE_IN_REQUIRE_ASR = true
         private const val BARGE_IN_MIN_ALNUM_CHARS = 2
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.68
