@@ -3460,9 +3460,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_MIN_CAPTURE_RMS = 6.0
         private const val ROOT_MIN_ACCEPT_RMS = 26.0
         private const val ROOT_MIN_ACCEPT_VOICED_MS = 180
-        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 24_000
+        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 32_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
-        private const val ROOT_CAPTURE_PRECISE_CHUNKS = true
+        private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
         private const val ROOT_CAPTURE_PRECISE_PADDING_MS = 220
         private const val ROOT_CAPTURE_PRECISE_MAX_MS = 2_400
         private const val ROOT_CAPTURE_PRECISE_EXTRA_SECONDS = 1
@@ -3479,11 +3479,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 100
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
-        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(24_000)
-        private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2)
-        private const val ROOT_CAPTURE_RATE_FIX_ENABLED = false
+        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(32_000, 24_000, 16_000, 8_000)
+        private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
+        private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
-        private const val ROOT_CAPTURE_RATE_FIX_TO = 16_000
+        private const val ROOT_CAPTURE_RATE_FIX_TO = 24_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
         private const val ENABLE_ADAPTIVE_CAPTURE_RATE = false
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
@@ -3562,6 +3562,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val AUDIO_SOURCE_CANDIDATES = listOf(
             AudioSourceCandidate(id = 3, name = "voice_downlink"),
             AudioSourceCandidate(id = 4, name = "voice_call"),
+            AudioSourceCandidate(id = MediaRecorder.AudioSource.VOICE_RECOGNITION, name = "voice_recognition"),
+            AudioSourceCandidate(id = MediaRecorder.AudioSource.MIC, name = "mic"),
         )
         private val ROOT_CAPTURE_CANDIDATES = listOf(
             RootCaptureCandidate(device = 20, name = "incall_cap_0"),
