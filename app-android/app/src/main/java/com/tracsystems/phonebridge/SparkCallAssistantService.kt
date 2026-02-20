@@ -83,6 +83,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     @Volatile
     private var forceFallbackTurnsRemaining = 0
     @Volatile
+    private var startupRecoveryActive = false
+    @Volatile
     private var rootCapturePinned = false
     private val silenceWatchdog = object : Runnable {
         override fun run() {
@@ -166,6 +168,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             turnVad = null
             rootCapturePinned = false
             forceFallbackTurnsRemaining = FIRST_TURNS_FORCE_FALLBACK
+            startupRecoveryActive = ENABLE_STARTUP_CAPTURE_RECOVERY
             fallbackPromptAtMs.set(0L)
             initializeRootRuntime()
             enableCallAudioRoute()
@@ -201,6 +204,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         clearRootRollingPrebuffer()
         runCatching { turnVad?.close() }
         turnVad = null
+        startupRecoveryActive = false
         restoreRootCallRouteProfile()
         networkExecutor.shutdownNow()
         CommandAuditLog.add("voice_bridge:stop")
@@ -343,12 +347,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 var transcriptChunkCount = 0
                 var lastRejectionReason: String? = null
                 var sameSourceRetries = 0
+                val strictStreamOnly = isStrictStreamOnlyActive()
                 val useStateMachine = ENABLE_UTTERANCE_STATE_MACHINE
                 if (useStateMachine) {
                     val utterance = captureUtteranceStateMachine()
                     if (utterance == null) {
                         lastRejectionReason = "utterance_empty"
-                        if (ENABLE_STRICT_STREAM_ONLY) {
+                        if (strictStreamOnly) {
                             Log.w(TAG, "state-machine utterance empty; strict stream mode retry")
                             speaking.set(false)
                             startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
@@ -360,10 +365,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         transcriptAudioWav = utterance.audioWav
                         transcriptChunkCount = utterance.chunkCount
                     }
-                } else if (!ENABLE_STRICT_STREAM_ONLY) {
+                } else if (!strictStreamOnly) {
                     CommandAuditLog.add("voice_bridge:first_turn_force_fallback")
                 }
-                if (transcriptPreview.isBlank() && transcriptAudioWav == null && !ENABLE_STRICT_STREAM_ONLY) {
+                if (transcriptPreview.isBlank() && transcriptAudioWav == null && !strictStreamOnly) {
                     repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
                         if (transcriptPreview.isNotBlank()) {
                             return@repeat
@@ -382,7 +387,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                             if (capture.rejectionReason == "no_audio_source") {
                                 consecutiveNoAudioRejects += 1
                                 maybeRecoverRootRoute()
-                                if (consecutiveNoAudioRejects >= NO_AUDIO_UNPIN_THRESHOLD) {
+                                if (consecutiveNoAudioRejects >= noAudioUnpinThreshold()) {
                                     resetRootCapturePin("no_audio_source_streak_$consecutiveNoAudioRejects")
                                 }
                             } else {
@@ -498,7 +503,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         }
                     }
                 }
-                if (transcriptPreview.isBlank() && transcriptAudioWav == null && ENABLE_STRICT_STREAM_ONLY) {
+                if (transcriptPreview.isBlank() && transcriptAudioWav == null && strictStreamOnly) {
                     speaking.set(false)
                     startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
                     return@execute
@@ -618,6 +623,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     return@execute
                 }
                 Log.i(TAG, "spark audio reply: ${cleanReply.take(96)}")
+                markStartupRecoveryComplete("first_turn_ok")
                 val rootPlayback = if (response?.livePlaybackHandled == true) {
                     RootPlaybackResult(
                         played = !response.livePlaybackInterrupted,
@@ -687,6 +693,40 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }, delayMs)
     }
 
+    private fun isStrictStreamOnlyActive(): Boolean {
+        return ENABLE_STRICT_STREAM_ONLY && !startupRecoveryActive
+    }
+
+    private fun noAudioUnpinThreshold(): Int {
+        return if (startupRecoveryActive) STARTUP_NO_AUDIO_UNPIN_THRESHOLD else NO_AUDIO_UNPIN_THRESHOLD
+    }
+
+    private fun rootCaptureSourceRotateThreshold(): Int {
+        return if (startupRecoveryActive) {
+            STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD
+        } else {
+            ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD
+        }
+    }
+
+    private fun fastPostPlaybackStreamUnpinThreshold(): Int {
+        return if (startupRecoveryActive) {
+            STARTUP_FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD
+        } else {
+            FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD
+        }
+    }
+
+    private fun markStartupRecoveryComplete(reason: String) {
+        if (!startupRecoveryActive) {
+            return
+        }
+        startupRecoveryActive = false
+        consecutiveNoAudioRejects = 0
+        CommandAuditLog.add("voice_bridge:startup_recovery_done:$reason")
+        Log.i(TAG, "startup capture recovery complete: $reason")
+    }
+
     private fun captureUtteranceStateMachine(): AssembledUtterance? {
         if (!InCallStateHolder.hasLiveCall()) {
             return null
@@ -743,17 +783,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 maybeRecoverRootRoute()
                 if (!speakingNow && fastEndpointMode && consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD) {
                     stopRootCaptureStreamSession("fast_post_playback_rebind_$consecutiveNoAudioRejects")
-                    if (consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD) {
+                    if (consecutiveNoAudioRejects >= fastPostPlaybackStreamUnpinThreshold()) {
                         resetRootCapturePin("fast_post_playback_no_audio_$consecutiveNoAudioRejects")
                     }
                 }
                 if (consecutiveNoAudioRejects >= ROOT_CAPTURE_STREAM_RESTART_THRESHOLD) {
                     stopRootCaptureStreamSession("stream_timeout_$consecutiveNoAudioRejects")
                 }
-                if (consecutiveNoAudioRejects >= NO_AUDIO_UNPIN_THRESHOLD) {
+                if (consecutiveNoAudioRejects >= noAudioUnpinThreshold()) {
                     resetRootCapturePin("utterance_stream_no_audio_$consecutiveNoAudioRejects")
                 }
-                if (consecutiveNoAudioRejects >= ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD) {
+                if (consecutiveNoAudioRejects >= rootCaptureSourceRotateThreshold()) {
                     rotateRootCaptureSource()
                 }
                 if (speakingNow) {
@@ -3853,6 +3893,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
         private const val NO_AUDIO_RETRY_DELAY_MS = 450L
         private const val BARGE_IN_RESUME_DELAY_MS = 40L
+        private const val ENABLE_STARTUP_CAPTURE_RECOVERY = true
+        private const val STARTUP_NO_AUDIO_UNPIN_THRESHOLD = 4
+        private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 4
+        private const val STARTUP_FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 4
         private const val NO_AUDIO_UNPIN_THRESHOLD = 20
         private const val ENFORCE_CALL_MUTE = true
         private const val ENABLE_FOREGROUND_NOTIFICATION = false

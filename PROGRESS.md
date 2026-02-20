@@ -3243,3 +3243,22 @@ _Last updated: 2026-02-19_
 
 ### Revert path
 - Single-flag rollback: set `BARGE_IN_ENERGY_ONLY_MODE = false`.
+
+## 2026-02-20 20:05 — Startup-only aggressive capture recovery (snappier first turn)
+
+### What
+- Added startup recovery phase per call:
+  - `startupRecoveryActive` is enabled on service start and disabled after first successful turn reply.
+- During startup recovery only:
+  - strict stream-only mode is relaxed (state-machine can fall back to fixed capture probes),
+  - no-audio unpin/rotate thresholds are aggressive (`20 -> 4` equivalents),
+  - fast post-playback unpin threshold is aggressive (`20 -> 4` equivalent).
+- After first successful turn, service auto-switches back to stable thresholds/strict mode.
+
+### Why
+- Logs showed repeated `state-machine utterance empty; strict stream mode retry` after greeting, causing a 6–10s startup dead window.
+- Existing stable settings were tuned for mid-call quality, but too conservative for first-turn recovery.
+
+### Validation
+- Android module compiles cleanly:
+  - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
