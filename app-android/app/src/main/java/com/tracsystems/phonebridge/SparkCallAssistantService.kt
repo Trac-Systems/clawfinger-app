@@ -1141,6 +1141,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     lastRejection = "root_short_voice"
                     continue
                 }
+                if (analysis.dynamicRange < ROOT_MIN_ACCEPT_DYNAMIC_RANGE) {
+                    lastRejection = "root_low_dynamic"
+                    continue
+                }
+                if (analysis.confidence < ROOT_MIN_ACCEPT_CONFIDENCE) {
+                    lastRejection = "root_low_confidence"
+                    continue
+                }
             }
             selectedRootCaptureSource = candidate
             selectedRootCaptureSampleRate = captured.sampleRate
@@ -3621,6 +3629,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_MIN_CAPTURE_RMS = 6.0
         private const val ROOT_MIN_ACCEPT_RMS = 22.0
         private const val ROOT_MIN_ACCEPT_VOICED_MS = 180
+        private const val ROOT_MIN_ACCEPT_DYNAMIC_RANGE = 35.0
+        private const val ROOT_MIN_ACCEPT_CONFIDENCE = 0.62
         private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 24_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
         private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
@@ -3682,7 +3692,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
         private const val FIRST_TURNS_FORCE_FALLBACK = 1
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
-        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(2200, 2600, 3200)
+        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 220
         private const val UTTERANCE_PRE_ROLL_MS = 900
@@ -3726,6 +3736,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             "speaker_mismatch",
             "clipping",
             "flat_signal",
+            "asr_empty",
+            "low_quality_transcript",
+            "root_low_dynamic",
+            "root_low_confidence",
         )
         private val AUDIO_SOURCE_CANDIDATES = listOf(
             AudioSourceCandidate(id = 3, name = "voice_downlink"),

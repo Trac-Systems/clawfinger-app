@@ -2873,3 +2873,23 @@ _Last updated: 2026-02-19_
 ### Expected effect
 - Prevents long second-turn dead zones when root stream delivers sparse audio data.
 - Should trigger prompt fallback or timeout path instead of silent stall.
+
+## 2026-02-20 13:52 — Correct first-turn regression: reject weak fallback audio and rotate source faster
+
+### Observed regression (`latest-call-20260220-134925`)
+- First turn failed to understand user input.
+- Log showed fallback accepted a very weak capture (`rms≈91`, `dynamicRange≈16`, `conf≈0.57`) and ASR returned empty.
+- Retry stayed on bad source too long, then call ended before recovery.
+
+### Fix
+- In root fallback acceptance path (when `ROOT_SKIP_QUALITY_GATES=true`), added two hard guards:
+  - `ROOT_MIN_ACCEPT_DYNAMIC_RANGE = 35.0`
+  - `ROOT_MIN_ACCEPT_CONFIDENCE = 0.62`
+- Restored faster fallback attempt windows to reduce first-turn latency:
+  - `CAPTURE_DURATION_BY_ATTEMPT_MS: [2200,2600,3200] -> [1800,2200,2600]`
+- Force immediate source rotation for failed semantic captures:
+  - added to immediate-rotate reasons: `asr_empty`, `low_quality_transcript`, `root_low_dynamic`, `root_low_confidence`.
+
+### Expected effect
+- Weak/garbled first-turn capture gets rejected earlier instead of sent to ASR.
+- Retry switches source faster and should recover first turn more reliably.
