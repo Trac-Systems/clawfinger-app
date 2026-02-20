@@ -3299,3 +3299,21 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-20 20:52 — End-of-reply capture pre-arm to reduce post-reply deadzone
+
+### What
+- Added conservative post-reply pre-arm in playback monitor loop:
+  - in the final playback window, the service attempts to bind capture stream and pull one short chunk into rolling prebuffer.
+  - this shifts part of capture setup latency into the tail end of assistant playback.
+- Added bounded pre-arm controls:
+  - window, retry interval, max attempts, and chunk size are explicitly capped.
+  - no change to existing turn VAD logic or strict stream-mode behavior.
+
+### Why
+- User reports persistent deadzone after assistant finishes speaking.
+- Root path cannot do true full-duplex reliably on the same call device, so pre-arming capture before playback ends is the safest low-risk reduction strategy.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.

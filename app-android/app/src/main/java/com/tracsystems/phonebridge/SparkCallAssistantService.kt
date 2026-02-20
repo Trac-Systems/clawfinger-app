@@ -1876,24 +1876,50 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Long.MAX_VALUE
         }
         var nextProbeAt = startedAt + BARGE_IN_ARM_DELAY_MS
+        var preArmAttempts = 0
+        var nextPreArmAt = if (
+            ENABLE_POST_PLAYBACK_CAPTURE_PREARM &&
+            expectedStopAt != Long.MAX_VALUE &&
+            POST_PLAYBACK_PREARM_MAX_ATTEMPTS > 0
+        ) {
+            max(
+                startedAt + POST_PLAYBACK_PREARM_MIN_START_AFTER_MS,
+                expectedStopAt - POST_PLAYBACK_PREARM_WINDOW_MS,
+            )
+        } else {
+            Long.MAX_VALUE
+        }
         while (System.currentTimeMillis() < deadline) {
+            val now = System.currentTimeMillis()
             if (!InCallStateHolder.hasLiveCall()) {
                 stopRootPlaybackProcess(pid)
                 return RootPlaybackResult(played = false, interrupted = false)
+            }
+            if (
+                nextPreArmAt != Long.MAX_VALUE &&
+                now >= nextPreArmAt &&
+                preArmAttempts < POST_PLAYBACK_PREARM_MAX_ATTEMPTS
+            ) {
+                preArmAttempts += 1
+                val preArmed = tryPrearmPostPlaybackCapture(device = device, attempt = preArmAttempts)
+                if (preArmed) {
+                    nextPreArmAt = Long.MAX_VALUE
+                } else {
+                    nextPreArmAt = now + POST_PLAYBACK_PREARM_RETRY_MS
+                }
             }
             if (!isRootProcessAlive(pid)) {
                 Log.i(TAG, "root tinyplay ok device=$device")
                 markSpeechActivity("root_playback:$device")
                 return RootPlaybackResult(played = true, interrupted = false)
             }
-            if (System.currentTimeMillis() >= expectedStopAt) {
+            if (now >= expectedStopAt) {
                 stopRootPlaybackProcess(pid)
                 Log.i(TAG, "root tinyplay forced-stop at expected end device=$device")
                 markSpeechActivity("root_playback_forced:$device")
                 return RootPlaybackResult(played = true, interrupted = false)
             }
             if (enableBargeInInterrupt) {
-                val now = System.currentTimeMillis()
                 if (now >= nextProbeAt) {
                     nextProbeAt = now + BARGE_IN_PROBE_INTERVAL_MS
                     if (detectBargeInSpeech(replyTextForEcho)) {
@@ -1922,6 +1948,22 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             interrupted = false,
             timedOut = true,
         )
+    }
+
+    private fun tryPrearmPostPlaybackCapture(device: Int, attempt: Int): Boolean {
+        val session = ensureRootCaptureStreamSession()
+        if (session == null) {
+            CommandAuditLog.add("voice_bridge:post_playback_prearm:session_null:$device:a$attempt")
+            return false
+        }
+        val frame = readRootCaptureStreamChunk(session, POST_PLAYBACK_PREARM_CHUNK_MS)
+        if (frame != null && frame.pcm.isNotEmpty()) {
+            appendRootRollingPrebuffer(frame)
+            CommandAuditLog.add("voice_bridge:post_playback_prearm:ok:$device:a$attempt:bytes=${frame.pcm.size}")
+        } else {
+            CommandAuditLog.add("voice_bridge:post_playback_prearm:bound:$device:a$attempt")
+        }
+        return true
     }
 
     private fun isRootProcessAlive(pid: Int): Boolean {
@@ -4004,6 +4046,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_PLAYBACK_RETRY_ON_TIMEOUT = false
         private const val ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED = true
         private const val PLAYBACK_STUCK_GRACE_MS = 350L
+        private const val ENABLE_POST_PLAYBACK_CAPTURE_PREARM = true
+        private const val POST_PLAYBACK_PREARM_WINDOW_MS = 900L
+        private const val POST_PLAYBACK_PREARM_MIN_START_AFTER_MS = 300L
+        private const val POST_PLAYBACK_PREARM_RETRY_MS = 180L
+        private const val POST_PLAYBACK_PREARM_MAX_ATTEMPTS = 4
+        private const val POST_PLAYBACK_PREARM_CHUNK_MS = 120
         private const val ROOT_PLAY_START_TIMEOUT_MS = 2_500L
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
         private const val ROOT_ROUTE_RECOVER_THROTTLE_MS = 1_800L
