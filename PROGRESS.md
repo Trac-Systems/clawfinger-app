@@ -2158,3 +2158,25 @@ _Last updated: 2026-02-19_
 
 ### Notes
 - Kept the locked baseline settings unchanged (legacy capture path, larger windows, no stream path).
+
+## 2026-02-20 06:47 — Barge-in contention mitigation after stop-response regression
+
+### Why
+- Latest live call with barge-in enabled showed post-reply stalls:
+  - repeated `no_audio_source` after playback,
+  - delayed/garbled follow-up transcript.
+- Needed barge-in to stay enabled without destabilizing normal turn capture.
+
+### Changes
+- Limited barge-in probing to a single delayed probe per reply playback:
+  - `BARGE_IN_MAX_PROBES_PER_REPLY = 1`
+  - `BARGE_IN_ARM_DELAY_MS = 320`
+- Reduced probe footprint:
+  - `BARGE_IN_PROBE_CAPTURE_MS = 180`
+  - `BARGE_IN_MIN_RMS = 26.0`
+  - `BARGE_IN_MIN_VOICED_MS = 110`
+- Prevented source churn on no-audio retries:
+  - `shouldRetrySameSource("no_audio_source", ...)` now always retries current pinned source (no immediate rotate on this reason).
+
+### Intent
+- Keep interruption available while minimizing capture-path contention/regression after assistant playback.
