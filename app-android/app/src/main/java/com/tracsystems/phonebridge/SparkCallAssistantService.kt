@@ -135,6 +135,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
             CommandAuditLog.add("voice_bridge:start")
+            speaking.set(false)
             sessionId = null
             selectedAudioSource = null
             selectedRootCaptureSource = ROOT_CAPTURE_CANDIDATES.firstOrNull()
@@ -168,6 +169,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         Log.i(TAG, "service onDestroy")
         serviceActive.set(false)
+        speaking.set(false)
         tts?.stop()
         tts?.shutdown()
         tts = null
@@ -529,7 +531,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun startCaptureLoop(delayMs: Long) {
         mainHandler.postDelayed({
             if (!serviceActive.get()) return@postDelayed
-            if (speaking.get()) return@postDelayed
+            if (speaking.get()) {
+                startCaptureLoop(120L)
+                return@postDelayed
+            }
             if (!InCallStateHolder.hasLiveCall()) {
                 Log.i(TAG, "stopping capture loop (call ended)")
                 stopSelf()
