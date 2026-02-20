@@ -2146,3 +2146,15 @@ _Last updated: 2026-02-19_
 
 ### Intent
 - Match the pre-regression call behavior that was explicitly marked as “lock that in”.
+
+## 2026-02-20 06:40 — Re-enabled barge-in on locked capture baseline
+
+### Why
+- User requested barge-in capability to be enabled again after restoring stable capture baseline.
+
+### Change
+- Set runtime toggle:
+  - `ENABLE_BARGE_IN_INTERRUPT = true`
+
+### Notes
+- Kept the locked baseline settings unchanged (legacy capture path, larger windows, no stream path).

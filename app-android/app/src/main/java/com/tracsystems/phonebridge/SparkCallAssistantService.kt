@@ -2744,7 +2744,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
         private const val ROOT_ROUTE_RECOVER_THROTTLE_MS = 1_800L
         private const val ROOT_PLAYBACK_SAMPLE_RATE = 48_000
-        private const val ENABLE_BARGE_IN_INTERRUPT = false
+        private const val ENABLE_BARGE_IN_INTERRUPT = true
         private const val BARGE_IN_ARM_DELAY_MS = 180L
         private const val BARGE_IN_PROBE_INTERVAL_MS = 480L
         private const val BARGE_IN_PLAYBACK_POLL_MS = 60L
