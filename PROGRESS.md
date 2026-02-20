@@ -3113,3 +3113,31 @@ _Last updated: 2026-02-19_
 1. Rebuild/install APK.
 2. Test with original `...5779` number.
 3. Validate immediate follow-up response window and remote-hangup cleanup.
+
+## 2026-02-20 16:37 — Dead-zone reduction pass across capture loop
+
+### What
+- Fixed start-of-utterance clipping bug in state-machine path:
+  - removed `appendChunk = false` when pre-roll is used, so first voiced chunk is no longer dropped.
+- Reduced capture-loop dead time constants:
+  - `CAPTURE_RETRY_DELAY_MS: 420 -> 120`
+  - `TRANSCRIPT_RETRY_DELAY_MS: 680 -> 260`
+  - `NO_AUDIO_RETRY_DELAY_MS: 1100 -> 450`
+- Increased endpoint granularity and no-speech turnaround:
+  - `UTTERANCE_CAPTURE_CHUNK_MS: 220 -> 120`
+  - `UTTERANCE_NO_SPEECH_TIMEOUT_MS: 1600 -> 900`
+
+### Why
+- User reported dead-zones and missing start/end speech segments.
+- Logs showed repeated capture ticks with long gaps between usable turns.
+- Code path dropped first voiced chunk when pre-roll existed, which explains clipped starts.
+
+### Result
+- Capture loop re-arms substantially faster.
+- First spoken chunk is preserved.
+- Turn boundary detection runs at finer time resolution.
+
+### Next
+1. Rebuild/install APK.
+2. Run new call to `+4915129135779`.
+3. Pull latest-only artifacts and validate reduced dead-zones + no clipped first chunk.

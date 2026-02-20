@@ -757,7 +757,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     current.write(rollingPrebuffer)
                 } else if (preRoll.isNotEmpty()) {
                     current.write(preRoll)
-                    appendChunk = false
                 }
                 speechSamples = chunkSamples
                 silenceSamples = 0
@@ -3735,9 +3734,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val NOTIFICATION_ID = 4501
         private const val SILENCE_HANGUP_MS = 90_000L
         private const val SILENCE_CHECK_INTERVAL_MS = 1_000L
-        private const val CAPTURE_RETRY_DELAY_MS = 420L
-        private const val TRANSCRIPT_RETRY_DELAY_MS = 680L
-        private const val NO_AUDIO_RETRY_DELAY_MS = 1_100L
+        private const val CAPTURE_RETRY_DELAY_MS = 120L
+        private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
+        private const val NO_AUDIO_RETRY_DELAY_MS = 450L
         private const val BARGE_IN_RESUME_DELAY_MS = 40L
         private const val NO_AUDIO_UNPIN_THRESHOLD = 6
         private const val ENFORCE_CALL_MUTE = true
@@ -3840,7 +3839,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
         private const val ENABLE_STRICT_STREAM_ONLY = true
-        private const val UTTERANCE_CAPTURE_CHUNK_MS = 220
+        private const val UTTERANCE_CAPTURE_CHUNK_MS = 120
         private const val UTTERANCE_PRE_ROLL_MS = 1_200
         private const val UTTERANCE_MIN_SPEECH_MS = 100
         private const val UTTERANCE_SILENCE_MS = 520
@@ -3848,7 +3847,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 6_000L
         private const val UTTERANCE_MAX_TURN_MS = 16_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
-        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 1_600
+        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 900
         private const val UTTERANCE_VAD_RMS = 80.0
         private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
         private const val UTTERANCE_VAD_RMS_FALLBACK = 120.0
