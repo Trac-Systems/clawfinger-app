@@ -76,6 +76,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     @Volatile
     private var rootBootstrapDone = false
     @Volatile
+    private var forceFallbackTurnsRemaining = 0
+    @Volatile
     private var rootCapturePinned = false
     private val silenceWatchdog = object : Runnable {
         override fun run() {
@@ -156,6 +158,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             enrolledSpeaker = null
             lastAssistantReplyText = ""
             rootCapturePinned = false
+            forceFallbackTurnsRemaining = FIRST_TURNS_FORCE_FALLBACK
             fallbackPromptAtMs.set(0L)
             initializeRootRuntime()
             enableCallAudioRoute()
@@ -317,8 +320,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         speaking.set(true)
         runCatching {
             networkExecutor.execute {
+                Log.i(TAG, "requestReplyFromAudioFallback run (live=${InCallStateHolder.hasLiveCall()})")
                 if (!InCallStateHolder.hasLiveCall()) {
+                    Log.w(TAG, "requestReplyFromAudioFallback aborted (no live call snapshot); retrying capture loop")
                     speaking.set(false)
+                    if (serviceActive.get()) {
+                        startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
+                    }
                     return@execute
                 }
                 var transcriptPreview = ""
@@ -326,7 +334,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 var transcriptChunkCount = 0
                 var lastRejectionReason: String? = null
                 var sameSourceRetries = 0
-                if (ENABLE_UTTERANCE_STATE_MACHINE) {
+                val useStateMachine = ENABLE_UTTERANCE_STATE_MACHINE && forceFallbackTurnsRemaining <= 0
+                if (useStateMachine) {
                     val utterance = captureUtteranceStateMachine()
                     if (utterance == null) {
                         lastRejectionReason = "utterance_empty"
@@ -336,6 +345,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         transcriptAudioWav = utterance.audioWav
                         transcriptChunkCount = utterance.chunkCount
                     }
+                } else {
+                    CommandAuditLog.add("voice_bridge:first_turn_force_fallback")
                 }
                 if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
                     repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
@@ -425,6 +436,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         transcriptPreview = candidateTranscript
                         transcriptAudioWav = capture.wav
                         transcriptChunkCount = 1
+                        if (forceFallbackTurnsRemaining > 0) {
+                            forceFallbackTurnsRemaining = (forceFallbackTurnsRemaining - 1).coerceAtLeast(0)
+                            CommandAuditLog.add("voice_bridge:first_turn_fallback_done")
+                        }
                     }
                 }
                 if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
@@ -3609,6 +3624,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_REQUIRE_ASR = true
         private const val BARGE_IN_MIN_ALNUM_CHARS = 2
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
+        private const val FIRST_TURNS_FORCE_FALLBACK = 1
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true

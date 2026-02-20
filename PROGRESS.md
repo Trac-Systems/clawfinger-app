@@ -2738,3 +2738,45 @@ _Last updated: 2026-02-19_
 ### Build/deploy
 - Rebuilt and reinstalled debug APK successfully.
 - Default dialer role still `com.tracsystems.phonebridge`.
+
+## 2026-02-20 10:06 — Force non-stream fallback on first post-greeting turn
+
+### Why
+- Reproduced failure: greeting played, then no response until call ended.
+- No new `rxm/tx` files were produced during failed call window, indicating first-turn capture path stalled before utterance finalization.
+
+### Fix
+- Added first-turn safety mode to bypass stream-state-machine capture right after greeting:
+  - `FIRST_TURNS_FORCE_FALLBACK=1`
+  - first user turn uses fallback probe capture path directly,
+  - once first fallback transcript is captured, it switches back to normal state-machine flow for subsequent turns.
+- Added audit markers:
+  - `voice_bridge:first_turn_force_fallback`
+  - `voice_bridge:first_turn_fallback_done`
+
+### Build/deploy
+- Rebuilt and reinstalled debug APK successfully.
+- Default dialer role still `com.tracsystems.phonebridge`.
+
+## 2026-02-20 10:12 — Fix dead-end when live-call snapshot flips false in turn worker
+
+### Observed behavior
+- Calls could greet, then `requestReplyFromAudioFallback start` logged once and no further turn logs were emitted.
+- Service stayed alive until hangup, but no response was generated.
+
+### Root cause
+- The capture loop checks `InCallStateHolder.hasLiveCall()` on main thread before scheduling a turn.
+- Inside the async turn worker, a second `hasLiveCall()` check could transiently evaluate `false` and return early.
+- That early return did not schedule another capture loop tick, so the conversation dead-ended.
+
+### Fix
+- Added worker-entry diagnostics:
+  - `requestReplyFromAudioFallback run (live=...)`
+- Changed the async early-return branch to recover instead of dead-end:
+  - log warning when worker sees `live=false`,
+  - clear `speaking`,
+  - reschedule capture loop (`CAPTURE_RETRY_DELAY_MS`) when service is still active.
+
+### Expected effect
+- Transient live-call state flips no longer permanently silence the conversation.
+- Turn loop retries automatically and should proceed once call-state snapshot stabilizes.
