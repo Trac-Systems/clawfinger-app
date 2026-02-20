@@ -3035,3 +3035,24 @@ _Last updated: 2026-02-19_
 1. Rebuild/install APK.
 2. Run fresh call and pull latest-only WAV + transcripts.
 3. Verify no 48k RXM outputs and no low-pitch turn artifacts.
+
+## 2026-02-20 15:24 — Remove forced 16k correction; lock stream to 48k fixed
+
+### What
+- Set fixed root stream capture/request/candidate rate back to 48 kHz:
+  - `ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 48000`
+  - `ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = [48000]`
+  - `ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = [48000]`
+- Disabled device rate-forcing map (`ROOT_CAPTURE_RATE_FIX_ENABLED = false`).
+
+### Why
+- Latest call artifacts showed `rxm` at 16 kHz with audibly low-pitch/slow playback and semantic drift.
+- For this device path, forcing 48/32 -> 16k is harming capture fidelity.
+
+### Result
+- Capture + turn ASR now run single-rate at 48 kHz with no forced down-correction.
+- This removes the 16k low-pitch path reported in latest call.
+
+### Next
+1. Rebuild/install APK.
+2. Run new call, pull latest-only artifacts, verify `rxm` sample-rate and pitch.

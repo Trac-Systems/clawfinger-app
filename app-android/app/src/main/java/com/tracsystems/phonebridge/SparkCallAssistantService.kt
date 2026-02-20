@@ -3716,7 +3716,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_MIN_ACCEPT_VOICED_MS = 90
         private const val ROOT_MIN_ACCEPT_DYNAMIC_RANGE = 35.0
         private const val ROOT_MIN_ACCEPT_CONFIDENCE = 0.62
-        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 16_000
+        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 48_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
         private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
         private const val ROOT_CAPTURE_PRECISE_PADDING_MS = 220
@@ -3736,9 +3736,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 70
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
-        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(16_000)
+        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(48_000)
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
-        private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
+        private const val ROOT_CAPTURE_RATE_FIX_ENABLED = false
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
         private const val ROOT_CAPTURE_RATE_FIX_FROM_ALT = 48_000
         private const val ROOT_CAPTURE_RATE_FIX_TO = 16_000
@@ -3747,7 +3747,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE = 11
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
-        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(16_000)
+        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(48_000)
         private const val ROOT_ROLLING_PREBUFFER_MS = 1_200
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
