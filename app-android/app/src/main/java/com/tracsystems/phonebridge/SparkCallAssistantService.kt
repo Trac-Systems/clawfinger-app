@@ -611,6 +611,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     return@execute
                 }
                 val cleanReply = sanitizeReply(reply)
+                if (SUPPRESS_BACKEND_CLARIFY_REPLY && isBackendClarifyReply(cleanReply)) {
+                    CommandAuditLog.add("voice_bridge:clarify_reply_suppressed")
+                    speaking.set(false)
+                    startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
+                    return@execute
+                }
                 Log.i(TAG, "spark audio reply: ${cleanReply.take(96)}")
                 val rootPlayback = if (response?.livePlaybackHandled == true) {
                     RootPlaybackResult(
@@ -2675,6 +2681,20 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun isBackendClarifyReply(reply: String): Boolean {
+        if (reply.isBlank()) return false
+        val normalized = reply
+            .lowercase(Locale.US)
+            .replace(Regex("[^a-z0-9\\s']"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (normalized.isBlank()) return false
+        if (!normalized.contains("hear")) return false
+        return normalized.contains("please try again") ||
+            normalized.contains("could not hear that clearly") ||
+            normalized.contains("couldn't hear that clearly")
+    }
+
     private fun shellQuote(input: String): String = "'${input.replace("'", "'\"'\"'")}'"
 
     private data class SparkTurnResponse(
@@ -3906,18 +3926,18 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
         private const val ROOT_ROUTE_RECOVER_THROTTLE_MS = 1_800L
         private const val ROOT_PLAYBACK_SAMPLE_RATE = 48_000
-        private const val ENABLE_BARGE_IN_INTERRUPT = false
-        private const val BARGE_IN_ARM_DELAY_MS = 180L
-        private const val BARGE_IN_PROBE_INTERVAL_MS = 480L
+        private const val ENABLE_BARGE_IN_INTERRUPT = true
+        private const val BARGE_IN_ARM_DELAY_MS = 80L
+        private const val BARGE_IN_PROBE_INTERVAL_MS = 220L
         private const val BARGE_IN_PLAYBACK_POLL_MS = 60L
         private const val BARGE_IN_PROBE_CAPTURE_MS = 220
-        private const val BARGE_IN_MIN_RMS = 24.0
-        private const val BARGE_IN_MIN_VOICED_MS = 90
-        private const val BARGE_IN_STRONG_RMS = 32.0
-        private const val BARGE_IN_STRONG_VOICED_MS = 140
+        private const val BARGE_IN_MIN_RMS = 20.0
+        private const val BARGE_IN_MIN_VOICED_MS = 60
+        private const val BARGE_IN_STRONG_RMS = 28.0
+        private const val BARGE_IN_STRONG_VOICED_MS = 100
         private const val BARGE_IN_REQUIRE_ASR = true
         private const val BARGE_IN_MIN_ALNUM_CHARS = 2
-        private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
+        private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.68
         private const val FIRST_TURNS_FORCE_FALLBACK = 0
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
@@ -3963,10 +3983,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val TURN_ECHO_REJECT_OVERLAP_THRESHOLD = 0.70
         private const val ECHO_RETRY_DELAY_MS = 120L
         private const val POST_PLAYBACK_ECHO_GUARD_WINDOW_MS = 1_200L
-        private const val POST_PLAYBACK_ECHO_GUARD_MAX_TOKENS = 4
-        private const val POST_PLAYBACK_ECHO_REJECT_OVERLAP_THRESHOLD = 0.35
-        private const val SHORT_TURN_MAX_TOKENS = 3
-        private const val SHORT_TURN_CONSENSUS_OVERLAP_THRESHOLD = 0.55
+        private const val POST_PLAYBACK_ECHO_GUARD_MAX_TOKENS = 3
+        private const val POST_PLAYBACK_ECHO_REJECT_OVERLAP_THRESHOLD = 0.60
+        private const val SHORT_TURN_MAX_TOKENS = 2
+        private const val SHORT_TURN_CONSENSUS_OVERLAP_THRESHOLD = 0.45
+        private const val SUPPRESS_BACKEND_CLARIFY_REPLY = true
         private const val MAX_REPLY_SENTENCES = 3
         private const val MAX_REPLY_CHARS = 320
         private const val REPLY_SENTENCE_DEDUP_OVERLAP_THRESHOLD = 0.85

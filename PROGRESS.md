@@ -3205,3 +3205,25 @@ _Last updated: 2026-02-19_
 - Fewer echo-induced false turns right after AI playback.
 - Better reliability for one- to three-word user replies.
 - Lower chance of long mixed/noisy utterances poisoning context.
+
+## 2026-02-20 17:14 — Overlap/early-talk hardening (barge-in enabled)
+
+### What
+- Enabled live barge-in interrupt during root playback and tuned probes for quicker user takeover:
+  - `ENABLE_BARGE_IN_INTERRUPT: false -> true`
+  - `BARGE_IN_ARM_DELAY_MS: 180 -> 80`
+  - `BARGE_IN_PROBE_INTERVAL_MS: 480 -> 220`
+  - lower barge-in speech thresholds (`RMS/voiced`).
+- Reduced false early-turn rejections:
+  - post-playback echo guard made stricter for actual echo (higher overlap threshold, smaller token scope).
+  - short-turn consensus relaxed to avoid rejecting valid short user replies.
+- Suppressed backend “I could not hear that clearly” playback:
+  - detect clarification boilerplate and immediately re-arm capture instead of speaking that line.
+
+### Why
+- User reported overlap/early speech often causing “please try again” or silent missed turns.
+- Root cause was barge-in disabled plus conservative early-turn filters producing avoidable retries.
+
+### Expected effect
+- User can speak over assistant with faster interruption takeover.
+- Fewer forced repeats right after assistant speech.
