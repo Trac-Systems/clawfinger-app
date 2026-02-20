@@ -322,12 +322,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     val utterance = captureUtteranceStateMachine()
                     if (utterance == null) {
                         lastRejectionReason = "utterance_empty"
+                        Log.w(TAG, "state-machine utterance empty; falling back to fixed capture probes")
                     } else {
                         transcriptPreview = utterance.transcript
                         transcriptAudioWav = utterance.audioWav
                         transcriptChunkCount = utterance.chunkCount
                     }
-                } else {
+                }
+                if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
                     repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
                         if (transcriptPreview.isNotBlank()) {
                             return@repeat
@@ -2308,12 +2310,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (coreTokens.isEmpty()) {
             return "no_tokens"
         }
-        if (coreTokens.size == 1 && coreTokens.first().length <= 3) {
-            return "single_token_short"
-        }
-        if (coreTokens.size >= 5) {
+        if (coreTokens.size >= 7) {
             val uniqueTokenRatio = coreTokens.toSet().size.toDouble() / coreTokens.size.toDouble()
-            if (uniqueTokenRatio < 0.34) {
+            if (uniqueTokenRatio < 0.30) {
                 return "repetitive_tokens"
             }
         }
@@ -3458,8 +3457,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_LOCAL_CLARIFICATION_TTS = false
         private const val ROOT_SKIP_QUALITY_GATES = true
         private const val ROOT_MIN_CAPTURE_RMS = 6.0
-        private const val ROOT_MIN_ACCEPT_RMS = 26.0
-        private const val ROOT_MIN_ACCEPT_VOICED_MS = 180
+        private const val ROOT_MIN_ACCEPT_RMS = 22.0
+        private const val ROOT_MIN_ACCEPT_VOICED_MS = 120
         private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 48_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
         private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
@@ -3470,9 +3469,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_DURATION_SEC = 900
         private const val ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE = 16
         private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
-        private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 760L
+        private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 1_100L
         private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 3
-        private const val MIN_ROOT_STREAM_CHUNK_BYTES = 320
+        private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 900
         private const val ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS = 320
@@ -3519,14 +3518,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
-        private const val ENABLE_UTTERANCE_STATE_MACHINE = false
-        private const val UTTERANCE_CAPTURE_CHUNK_MS = 260
-        private const val UTTERANCE_PRE_ROLL_MS = 640
-        private const val UTTERANCE_MIN_SPEECH_MS = 260
-        private const val UTTERANCE_SILENCE_MS = 760
-        private const val UTTERANCE_MAX_TURN_MS = 14_000
-        private const val UTTERANCE_LOOP_TIMEOUT_MS = 18_000
-        private const val UTTERANCE_VAD_RMS = 120.0
+        private const val ENABLE_UTTERANCE_STATE_MACHINE = true
+        private const val UTTERANCE_CAPTURE_CHUNK_MS = 220
+        private const val UTTERANCE_PRE_ROLL_MS = 900
+        private const val UTTERANCE_MIN_SPEECH_MS = 220
+        private const val UTTERANCE_SILENCE_MS = 1_100
+        private const val UTTERANCE_MAX_TURN_MS = 16_000
+        private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
+        private const val UTTERANCE_VAD_RMS = 80.0
         private const val ENABLE_UTTERANCE_CONTINUATION = false
         private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 900
         private const val MAX_UTTERANCE_CONTINUATION_WINDOWS = 2
@@ -3538,7 +3537,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_DEBUG_WAV_DUMP = true
         private const val DEBUG_WAV_DIR_NAME = "voice-debug"
         private const val MAX_DEBUG_WAV_FILES = 180
-        private const val MIN_TRANSCRIPT_ALNUM_CHARS = 3
+        private const val MIN_TRANSCRIPT_ALNUM_CHARS = 2
         private const val MIN_TRANSCRIPT_TOKEN_COUNT = 5
         private const val MIN_TRANSCRIPT_UNIQUE_RATIO = 0.45
         private const val TRANSCRIPT_ECHO_OVERLAP_THRESHOLD = 0.68

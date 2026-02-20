@@ -2638,3 +2638,47 @@ _Last updated: 2026-02-19_
   - `npm run test:unit`
   - `npm run test:integration`
   - `npm run test:e2e-sim`
+
+## 2026-02-20 09:20 — Stabilized turn-taking after low-latency regression report
+
+### Reported behavior
+- Good latency, but:
+  - assistant started replying before caller finished speaking,
+  - multi-turn flow stopped after a few turns.
+
+### Root causes confirmed
+- Turn-taking was running fixed-window fallback capture (`ENABLE_UTTERANCE_STATE_MACHINE=false`), which can cut mid-sentence.
+- Short/soft follow-up utterances were getting rejected too aggressively (`short_voice`, `low_rms`, strict transcript filtering), causing silent turn drops.
+
+### Changes applied
+- Re-enabled utterance endpointing state machine:
+  - `ENABLE_UTTERANCE_STATE_MACHINE=true`
+- Tuned endpointing to wait for caller end-of-utterance while preserving responsiveness:
+  - `UTTERANCE_CAPTURE_CHUNK_MS: 260 -> 220`
+  - `UTTERANCE_PRE_ROLL_MS: 640 -> 900`
+  - `UTTERANCE_MIN_SPEECH_MS: 260 -> 220`
+  - `UTTERANCE_SILENCE_MS: 760 -> 1100`
+  - `UTTERANCE_MAX_TURN_MS: 14000 -> 16000`
+  - `UTTERANCE_LOOP_TIMEOUT_MS: 18000 -> 20000`
+  - `UTTERANCE_VAD_RMS: 120 -> 80`
+- Added hard fallback path so state-machine misses do not stall conversation:
+  - when utterance state machine returns empty, service now falls back to fixed capture probes in the same turn cycle.
+- Relaxed transcript rejection to reduce false drops:
+  - removed `single_token_short` rejection,
+  - reduced repetitive-token strictness (`>=7` tokens and ratio `<0.30`),
+  - lowered `MIN_TRANSCRIPT_ALNUM_CHARS: 3 -> 2`.
+- Relaxed root acceptance/read thresholds for weak but valid speech:
+  - `ROOT_MIN_ACCEPT_RMS: 26 -> 22`
+  - `ROOT_MIN_ACCEPT_VOICED_MS: 180 -> 120`
+  - `ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS: 760ms -> 1100ms`
+  - `MIN_ROOT_STREAM_CHUNK_BYTES: 320 -> 192`
+
+### Build/deploy
+- Rebuilt debug APK: `scripts/android-build-debug.sh`
+- Reinstalled to Pixel 10 Pro: `scripts/android-install-debug.sh`
+- Default dialer role confirmed for `com.tracsystems.phonebridge`.
+
+### Next live checks
+- Verify caller can complete full sentence before model turn starts.
+- Verify at least 5 consecutive turns without silent drop.
+- If residual drops remain, capture latest `rxm-*` + `tx-*` wave pairs and inspect per-turn endpoint timing.
