@@ -2618,6 +2618,19 @@ _Last updated: 2026-02-19_
 - Server-ASR path check: `debug-wavs/stream-sim-web-tuned/model-replay-server-asr.txt`
   - `skip_asr=false` with audio-only 11–14s turns succeeds.
   - ASR source reports `filtered/raw` with correct transcripts.
+- Added end-to-end replay automation script:
+  - `scripts/replay-turns-against-spark.sh`
+  - replays each simulated turn WAV through both:
+    - `skip_asr=true` (client-local-ASR path)
+    - `skip_asr=false` (server-ASR fallback path)
+  - output: `debug-wavs/stream-sim-web-tuned/model-replay-full.txt`
+  - aggregated replay stats:
+    - files replayed: `32`
+    - avg turn duration: `9.38s`
+    - empty ASR transcripts: `1` (short near-silence segment)
+    - avg end-to-end latency:
+      - skip path: `404.9ms`
+      - server-ASR path: `1067.4ms`
 
 ### Build/test/deploy
 - Rebuilt and installed debug APK after tuning.
