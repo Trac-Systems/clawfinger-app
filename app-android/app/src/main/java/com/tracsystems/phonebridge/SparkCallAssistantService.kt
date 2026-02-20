@@ -1106,12 +1106,27 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         var lastRejection: String? = null
         for (candidate in captureOrder) {
-            var captured = captureRootPcmAdaptive(
+            val capturedRaw = captureRootPcmAdaptive(
                 device = candidate.device,
                 durationMs = durationMs,
                 preferredSampleRate = sampleRate,
             ) ?: continue
-            captured = maybeExtendRootCaptureTail(candidate.device, captured)
+            val leadingPrebuffer = consumeRootRollingPrebuffer(capturedRaw.sampleRate)
+            var captured = maybeExtendRootCaptureTail(candidate.device, capturedRaw)
+            if (leadingPrebuffer.isNotEmpty()) {
+                captured = captured.copy(
+                    pcm = appendAndTrimBytes(
+                        existing = leadingPrebuffer,
+                        incoming = captured.pcm,
+                        maxBytes = ((captured.sampleRate * ROOT_CAPTURE_MAX_MERGED_MS) / 1000) * 2,
+                    ),
+                )
+                Log.i(
+                    TAG,
+                    "root capture prepended prebuffer bytes=${leadingPrebuffer.size} total=${captured.pcm.size}",
+                )
+            }
+            appendRootRollingPrebuffer(capturedRaw)
             val rms = rmsPcm16(captured.pcm)
             if (rms < ROOT_MIN_CAPTURE_RMS) {
                 continue
@@ -1518,10 +1533,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (!ROOT_CAPTURE_RATE_FIX_DEVICES.contains(device)) {
             return sampleRate
         }
-        return if (sampleRate == ROOT_CAPTURE_RATE_FIX_FROM) {
-            ROOT_CAPTURE_RATE_FIX_TO
-        } else {
-            sampleRate
+        return when (sampleRate) {
+            ROOT_CAPTURE_RATE_FIX_FROM,
+            ROOT_CAPTURE_RATE_FIX_FROM_ALT,
+            -> ROOT_CAPTURE_RATE_FIX_TO
+            else -> sampleRate
         }
     }
 
@@ -2421,7 +2437,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
 
         val tokens = normalized.split(" ").filter { it.isNotBlank() }
-        val coreTokens = tokens.filter { it.length >= 2 }
+        val coreTokens = tokens
         if (coreTokens.isEmpty()) {
             return "no_tokens"
         }
@@ -3628,7 +3644,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_SKIP_QUALITY_GATES = true
         private const val ROOT_MIN_CAPTURE_RMS = 6.0
         private const val ROOT_MIN_ACCEPT_RMS = 22.0
-        private const val ROOT_MIN_ACCEPT_VOICED_MS = 180
+        private const val ROOT_MIN_ACCEPT_VOICED_MS = 90
         private const val ROOT_MIN_ACCEPT_DYNAMIC_RANGE = 35.0
         private const val ROOT_MIN_ACCEPT_CONFIDENCE = 0.62
         private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 24_000
@@ -3646,15 +3662,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
         private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.30
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
-        private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 900
+        private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 1_200
         private const val ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS = 320
-        private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 100
+        private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 70
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
         private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(24_000, 48_000, 32_000, 16_000, 8_000)
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
-        private const val ROOT_CAPTURE_RATE_FIX_ENABLED = false
+        private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
+        private const val ROOT_CAPTURE_RATE_FIX_FROM_ALT = 48_000
         private const val ROOT_CAPTURE_RATE_FIX_TO = 24_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
         private const val ENABLE_ADAPTIVE_CAPTURE_RATE = true
@@ -3693,7 +3710,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val FIRST_TURNS_FORCE_FALLBACK = 1
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
-        private const val ENABLE_UTTERANCE_STATE_MACHINE = true
+        private const val ENABLE_UTTERANCE_STATE_MACHINE = false
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 220
         private const val UTTERANCE_PRE_ROLL_MS = 900
         private const val UTTERANCE_MIN_SPEECH_MS = 220
@@ -3704,9 +3721,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
         private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 3_600
         private const val UTTERANCE_VAD_RMS = 80.0
-        private const val ENABLE_UTTERANCE_CONTINUATION = false
-        private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 900
-        private const val MAX_UTTERANCE_CONTINUATION_WINDOWS = 2
+        private const val ENABLE_UTTERANCE_CONTINUATION = true
+        private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 700
+        private const val MAX_UTTERANCE_CONTINUATION_WINDOWS = 3
         private const val UTTERANCE_END_BOUNDARY_WINDOWS = 1
         private const val MAX_UTTERANCE_CHUNKS_PER_TURN = 4
         private const val MAX_UTTERANCE_MERGED_AUDIO_MS = 9_500
@@ -3730,7 +3747,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Regex("^(take\\s+care(\\s+and)?\\s+(bye|bye\\s*bye|goodbye)[.!]?)$"),
             Regex("^(see\\s+you\\s+next\\s+week[.!]?)$"),
             Regex("^(you\\s+know[.!?]?)$"),
-            Regex("^(yeah|yep|uh|hmm|mmm|ok|okay|sure|alright|i\\s+get\\s+you|thank\\s+you|you\\s*re\\s+welcome)(\\s+(yeah|yep|uh|hmm|mmm|ok|okay|sure|alright|i\\s+get\\s+you|thank\\s+you|you\\s*re\\s+welcome))*$"),
         )
         private val SOURCE_ROTATE_IMMEDIATELY_REASONS = setOf(
             "speaker_mismatch",

@@ -2893,3 +2893,32 @@ _Last updated: 2026-02-19_
 ### Expected effect
 - Weak/garbled first-turn capture gets rejected earlier instead of sent to ASR.
 - Retry switches source faster and should recover first turn more reliably.
+
+## 2026-02-20 14:02 — Stabilize call turns for pitch drift, clipped edges, and single-word inputs
+
+### Why
+- User reported three live-call failures at once:
+  - occasional high-pitch/fast capture on RX,
+  - single-word follow-ups being skipped,
+  - beginning/end clipping on captured user turns.
+
+### Changes
+- Added root prebuffer stitching in fallback capture path:
+  - consume rolling prebuffer before each new root capture,
+  - prepend it to the current capture,
+  - repopulate prebuffer from the just-captured raw chunk for the next turn.
+- Reduced strict short-utterance rejection:
+  - `ROOT_MIN_ACCEPT_VOICED_MS: 180 -> 90`.
+- Increased tail safety for clipped endings:
+  - `ROOT_CAPTURE_TRAILING_EXTENSION_MS: 900 -> 1200`,
+  - `ROOT_CAPTURE_TRAILING_MIN_VOICED_MS: 100 -> 70`.
+- Enabled sample-rate correction for known problematic root devices and expanded correction mapping:
+  - `ROOT_CAPTURE_RATE_FIX_ENABLED: false -> true`,
+  - map both `32000` and `48000` captures to `24000` for devices `20/21/22/54`.
+- Relaxed low-info rejection so normal short acknowledgements are not auto-dropped:
+  - removed broad acknowledgement-word regex from `LOW_QUALITY_TRANSCRIPT_PATTERNS`.
+  - token scoring now keeps one-token utterances (`coreTokens = tokens`).
+
+### Build/deploy
+- Rebuilt APK successfully.
+- Reinstalled debug APK to Pixel (`com.tracsystems.phonebridge` still default dialer).
