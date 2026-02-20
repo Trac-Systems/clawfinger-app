@@ -2682,3 +2682,30 @@ _Last updated: 2026-02-19_
 - Verify caller can complete full sentence before model turn starts.
 - Verify at least 5 consecutive turns without silent drop.
 - If residual drops remain, capture latest `rxm-*` + `tx-*` wave pairs and inspect per-turn endpoint timing.
+
+## 2026-02-20 09:37 — Added acoustic completeness gating (single-word safe)
+
+### Why
+- User confirmed single-word turns must remain valid.
+- Existing failure mode was clipped/fragmented utterances becoming bad ASR text (`movie.` / `name.`), not transport crash.
+
+### What changed
+- Kept utterance state machine as primary path.
+- Added **same-turn fallback probes** when state-machine returns empty (already present), and now added **acoustic continuation gating**:
+  - continuation now can run for state-machine turns too,
+  - decision based on boundary acoustics + ASR stability score (not lexical overfitting).
+- New continuation trigger logic:
+  - continue if trailing boundary still contains speech,
+  - continue for short non-terminal turns,
+  - continue for short low-stability turns,
+  - otherwise commit immediately (single-word turns still accepted if acoustically complete/stable).
+- Added boundary-speech detection on utterance head/tail windows from decoded WAV.
+- Continuation tuning:
+  - enabled continuation,
+  - shorter continuation window (`750ms`) but up to `3` windows,
+  - require `2` empty boundary windows before close,
+  - allow up to `6` merged chunks and `12s` merged audio cap.
+
+### Build/deploy
+- Rebuilt and reinstalled debug APK successfully.
+- Default dialer role still held by `com.tracsystems.phonebridge`.
