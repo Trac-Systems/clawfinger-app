@@ -2207,3 +2207,16 @@ _Last updated: 2026-02-19_
 - Explicitly restored mixer route to idle (same as `ROOT_CALL_ROUTE_RESTORE_COMMANDS`):
   - control ids `116,117,120,121,122,123,124,125,135,136`
 - Cleared logcat for clean next-call diagnostics.
+
+## 2026-02-20 07:16 — Re-enabled WAV dumps for forensic comparison
+
+### Why
+- User requested pullable WAV artifacts “as before” for current regressions.
+- Locked baseline had debug dump disabled, so new calls produced no new WAV files.
+
+### Change
+- Temporarily enabled:
+  - `ENABLE_DEBUG_WAV_DUMP = true`
+
+### Note
+- This is for diagnostics; once enough comparison artifacts are collected, it should be disabled again.

@@ -2759,7 +2759,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
         private const val MAX_SAME_SOURCE_RETRIES = 2
-        private const val ENABLE_DEBUG_WAV_DUMP = false
+        private const val ENABLE_DEBUG_WAV_DUMP = true
         private const val DEBUG_WAV_DIR_NAME = "voice-debug"
         private const val MAX_DEBUG_WAV_FILES = 180
         private const val MIN_TRANSCRIPT_ALNUM_CHARS = 3
