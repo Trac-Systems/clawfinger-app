@@ -1997,6 +1997,26 @@ _Last updated: 2026-02-19_
 ### Deploy
 - Rebuilt and reinstalled debug APK successfully.
 
+## 2026-02-20 07:30 — Removed overfit ASR rewrite; stabilized stream startup path
+
+### Trigger
+- User reported no voice response after pickup and correctly flagged overfit behavior from phrase-specific transcript rewrites.
+
+### Findings
+- The no-response phase came from stream startup behavior where `tinycap -- ... > fifo` could block and time out before a usable stream formed.
+- ASR/turn quality issue remained separate: capture text was semantically wrong (`we're there` / `who was that`), so model replies were logically wrong despite valid playback.
+
+### Changes
+- Kept continuous root stream capture, but switched stream startup to non-blocking FIFO-open pattern:
+  - `tinycap -- ... 3<> <fifo> 1>&3 ...` in root stream process start.
+- Kept server turn call on two-stage path with `skip_asr=true` (app ASR transcript becomes authoritative turn text).
+- Removed brittle phrase-specific transcript remapping logic from app path.
+- Retained only neutral transcript normalization (`whitespace trim/collapse`), no semantic rewriting.
+
+### Result
+- Voice playback path remains active (`root tinyplay ok device=19` observed).
+- Remaining issue is upstream ASR semantic drift on phone-call audio, not LLM/TTS transport.
+
 ## 2026-02-20 05:47 — Rolled back to fast non-streaming call path
 
 ### Why

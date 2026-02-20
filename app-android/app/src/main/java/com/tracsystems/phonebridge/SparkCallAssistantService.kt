@@ -367,6 +367,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                             CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
                         }
                         .getOrNull()
+                        ?.let { normalizeTranscriptForCall(it) }
                         ?.trim()
                         .orEmpty()
                     if (candidateTranscript.isBlank()) {
@@ -448,7 +449,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 callSparkTurn(
                     transcript = transcriptPreview,
                     audioWav = transcriptAudioWav ?: buildSilenceWav(320),
-                    skipAsr = false,
+                    skipAsr = true,
                 )
             }.onFailure { error ->
                 Log.e(TAG, "spark text turn failed", error)
@@ -656,6 +657,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
             }
             .getOrNull()
+            ?.let { normalizeTranscriptForCall(it) }
             ?.trim()
             .orEmpty()
         if (transcript.isBlank()) {
@@ -753,6 +755,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     CommandAuditLog.add("voice_bridge:asr_cont_error:${error.message}")
                 }
                 .getOrNull()
+                ?.let { normalizeTranscriptForCall(it) }
                 ?.trim()
                 .orEmpty()
             if (continuationTranscript.isBlank()) {
@@ -1661,6 +1664,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val probeWav = pcm16ToWav(probe.pcm, probe.sampleRate)
         val transcript = runCatching { callSparkAsr(probeWav) }
             .getOrNull()
+            ?.let { normalizeTranscriptForCall(it) }
             ?.trim()
             .orEmpty()
         if (transcript.isBlank()) {
@@ -2121,6 +2125,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun List<Double>.averageOrZero(): Double {
         if (isEmpty()) return 0.0
         return average()
+    }
+
+    private fun normalizeTranscriptForCall(transcript: String): String {
+        return transcript
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
     private fun transcriptRejectReason(transcript: String): String? {
@@ -2760,7 +2770,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         sampleRate: Int,
         channels: Int,
     ): RootCaptureStreamSession? {
-        val fifoFile = File(filesDir, "pb-rootcap-stream-${System.currentTimeMillis()}-${source.device}.wav")
+        val fifoFile = File(filesDir, "pb-rootcap-stream-${System.currentTimeMillis()}-${source.device}.pcm")
         val prep = RootShellRuntime.run(
             command = "rm -f ${shellQuote(fifoFile.absolutePath)} && mkfifo ${shellQuote(fifoFile.absolutePath)} && chmod 666 ${shellQuote(fifoFile.absolutePath)}",
             timeoutMs = 2_500L,
@@ -2784,53 +2794,25 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runCatching { fifoFile.delete() }
             return null
         }
-        val deadline = System.currentTimeMillis() + ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS
-        val headerBytes = ByteArrayOutputStream()
-        val readBuffer = ByteArray(2048)
-        var header: StreamedWavHeader? = null
-        while (System.currentTimeMillis() < deadline && header == null) {
-            val available = runCatching { input.available() }.getOrDefault(0)
-            if (available <= 0) {
-                Thread.sleep(12L)
-                continue
-            }
-            val read = runCatching { input.read(readBuffer, 0, minOf(readBuffer.size, available)) }.getOrDefault(-1)
-            if (read <= 0) {
-                Thread.sleep(8L)
-                continue
-            }
-            headerBytes.write(readBuffer, 0, read)
-            header = parseStreamedWavHeader(headerBytes.toByteArray())
-        }
-        if (header == null) {
-            runCatching { input.close() }
-            stopRootPlaybackProcess(pid)
-            runCatching { fifoFile.delete() }
-            return null
-        }
-        val initialBytes = headerBytes.toByteArray()
-        val pending = if (initialBytes.size > header.dataOffset) {
-            initialBytes.copyOfRange(header.dataOffset, initialBytes.size)
-        } else {
-            ByteArray(0)
-        }
-        val effectiveSampleRate = applyRootCaptureSampleRateCorrection(source.device, header.sampleRate)
-        if (effectiveSampleRate != header.sampleRate) {
+        val requestedRate = sampleRate.coerceAtLeast(8_000)
+        val requestedChannels = channels.coerceAtLeast(1)
+        val effectiveSampleRate = applyRootCaptureSampleRateCorrection(source.device, requestedRate)
+        if (effectiveSampleRate != requestedRate) {
             Log.w(
                 TAG,
-                "root stream sampleRate corrected device=${source.device} from=${header.sampleRate} to=$effectiveSampleRate",
+                "root stream sampleRate corrected device=${source.device} from=$requestedRate to=$effectiveSampleRate",
             )
         }
         return RootCaptureStreamSession(
             fifoFile = fifoFile,
             inputStream = input,
             device = source.device,
-            rawSampleRate = header.sampleRate,
+            rawSampleRate = requestedRate,
             effectiveSampleRate = effectiveSampleRate,
-            channels = header.channels.coerceAtLeast(1),
-            bitsPerSample = header.bitsPerSample.coerceAtLeast(16),
+            channels = requestedChannels,
+            bitsPerSample = ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE,
             pid = pid,
-            pendingData = pending,
+            pendingData = ByteArray(0),
         )
     }
 
@@ -2843,8 +2825,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     ): Int? {
         val command = buildString {
             append(ROOT_TINYCAP_BIN)
-            append(" ")
-            append(shellQuote(fifoFile.absolutePath))
+            append(" --")
             append(" -D 0 -d ")
             append(device)
             append(" -c ")
@@ -2855,7 +2836,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             append(bitsPerSample.coerceAtLeast(16))
             append(" -t ")
             append(ROOT_CAPTURE_STREAM_DURATION_SEC)
-            append(" >/dev/null 2>&1 & echo $!")
+            append(" 3<> ")
+            append(shellQuote(fifoFile.absolutePath))
+            append(" 1>&3 2>/dev/null & echo $!")
         }
         val result = RootShellRuntime.run(
             command = command,
@@ -2932,13 +2915,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             val remaining = targetBytes - output.size()
             val available = runCatching { session.inputStream.available() }.getOrDefault(0)
             if (available <= 0) {
-                Thread.sleep(10L)
+                if (!sleepInterruptible(10L)) {
+                    return null
+                }
                 continue
             }
             val toRead = minOf(buffer.size, available, remaining)
             val read = runCatching { session.inputStream.read(buffer, 0, toRead) }.getOrDefault(-1)
             if (read <= 0) {
-                Thread.sleep(8L)
+                if (!sleepInterruptible(8L)) {
+                    return null
+                }
                 continue
             }
             output.write(buffer, 0, read)
@@ -2947,6 +2934,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             output.toByteArray()
         } else {
             null
+        }
+    }
+
+    private fun sleepInterruptible(ms: Long): Boolean {
+        return try {
+            Thread.sleep(ms)
+            true
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
         }
     }
 
