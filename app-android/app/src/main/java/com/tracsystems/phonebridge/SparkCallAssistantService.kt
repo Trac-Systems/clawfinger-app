@@ -3454,7 +3454,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_ROOT_BOOTSTRAP = true
         private const val ENABLE_ROOT_PCM_BRIDGE = true
         private const val ENABLE_ROOT_CALL_ROUTE_PROFILE = true
-        private const val STRICT_REMOTE_AUDIO_ONLY = true
+        private const val STRICT_REMOTE_AUDIO_ONLY = false
         private const val ENABLE_LOCAL_CLARIFICATION_TTS = false
         private const val ROOT_SKIP_QUALITY_GATES = true
         private const val ROOT_MIN_CAPTURE_RMS = 6.0
