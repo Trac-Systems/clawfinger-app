@@ -1806,6 +1806,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 if (playbackResult.played || playbackResult.interrupted) {
                     return playbackResult
                 }
+                if (playbackResult.timedOut && !ROOT_PLAYBACK_RETRY_ON_TIMEOUT) {
+                    val treatedAsPlayed = ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED
+                    CommandAuditLog.add("voice_bridge:root_playback_timeout_noretry:$device:played=$treatedAsPlayed")
+                    Log.w(
+                        TAG,
+                        "root tinyplay timed out device=$device; not replaying on another device (treatedAsPlayed=$treatedAsPlayed)",
+                    )
+                    return RootPlaybackResult(
+                        played = treatedAsPlayed,
+                        interrupted = false,
+                        timedOut = true,
+                    )
+                }
                 Log.w(
                     TAG,
                     "root tinyplay failed device=$device timeoutMs=$playbackTimeoutMs",
@@ -1899,7 +1912,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
         }
         stopRootPlaybackProcess(pid)
-        return RootPlaybackResult(played = false, interrupted = false)
+        CommandAuditLog.add("voice_bridge:root_playback_timeout:$device")
+        Log.w(
+            TAG,
+            "root tinyplay timeout device=$device timeoutMs=$timeoutMs expectedMs=$expectedDurationMs",
+        )
+        return RootPlaybackResult(
+            played = false,
+            interrupted = false,
+            timedOut = true,
+        )
     }
 
     private fun isRootProcessAlive(pid: Int): Boolean {
@@ -2761,6 +2783,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private data class RootPlaybackResult(
         val played: Boolean,
         val interrupted: Boolean,
+        val timedOut: Boolean = false,
     )
 
     private data class StreamedWavHeader(
@@ -3976,8 +3999,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_TINYPLAY_BIN = "/data/adb/service.d/phonebridge-tinyplay"
         private const val ROOT_TINYMIX_BIN = "/data/adb/service.d/phonebridge-tinymix"
         private const val ROOT_PLAY_TIMEOUT_MIN_MS = 1_200L
-        private const val ROOT_PLAY_TIMEOUT_MAX_MS = 20_000L
+        private const val ROOT_PLAY_TIMEOUT_MAX_MS = 90_000L
         private const val ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 500L
+        private const val ROOT_PLAYBACK_RETRY_ON_TIMEOUT = false
+        private const val ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED = true
         private const val PLAYBACK_STUCK_GRACE_MS = 350L
         private const val ROOT_PLAY_START_TIMEOUT_MS = 2_500L
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
@@ -4049,7 +4074,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val SHORT_TURN_CONSENSUS_OVERLAP_THRESHOLD = 0.45
         private const val SUPPRESS_BACKEND_CLARIFY_REPLY = true
         private const val MAX_REPLY_SENTENCES = 3
-        private const val MAX_REPLY_CHARS = 320
+        private const val MAX_REPLY_CHARS = 420
         private const val REPLY_SENTENCE_DEDUP_OVERLAP_THRESHOLD = 0.85
         private val LOW_QUALITY_TRANSCRIPT_PATTERNS = listOf(
             Regex("^(no\\s+){6,}no$"),

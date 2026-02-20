@@ -3279,3 +3279,23 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-20 20:37 — Stop long-reply replay loop and raise response ceiling
+
+### What
+- Playback timeout behavior hardened:
+  - Added a timeout signal in `RootPlaybackResult` and explicit timeout logging.
+  - On timeout, device replay retries are disabled (`ROOT_PLAYBACK_RETRY_ON_TIMEOUT=false`) to prevent replaying the same response on a second output route.
+  - Timeout is treated as played (`ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED=true`) to keep one-turn/one-reply behavior.
+- Raised root playback timeout cap:
+  - `ROOT_PLAY_TIMEOUT_MAX_MS: 20000 -> 90000`.
+- Raised assistant spoken reply ceiling in-app:
+  - `MAX_REPLY_CHARS: 320 -> 420`.
+
+### Why
+- User observed duplicate/louder second playback when replies ran long.
+- Root cause: playback timeout cap was reached and code retried playback on another device, re-emitting near-identical audio.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
