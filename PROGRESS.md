@@ -2017,6 +2017,28 @@ _Last updated: 2026-02-19_
 - Voice playback path remains active (`root tinyplay ok device=19` observed).
 - Remaining issue is upstream ASR semantic drift on phone-call audio, not LLM/TTS transport.
 
+## 2026-02-20 07:36 — Fixed duplicate-first-phrase bug and tightened capture rate correction
+
+### Trigger
+- User reported:
+  - single phrase spoken once but transcript duplicated,
+  - captured WAV still sounded too fast/high-pitched.
+
+### Root cause found
+- In `captureUtteranceStateMachine`, the first voiced chunk was written twice:
+  - once via pre-roll buffer,
+  - once again as the current chunk in the same iteration.
+- This explains repeated first phrase artifacts in transcript.
+
+### Changes
+- Added explicit `appendChunk` guard so first voiced chunk is not double-written when pre-roll already contains it.
+- Updated device capture rate correction:
+  - `ROOT_CAPTURE_RATE_FIX_TO` changed from `24000` to `16000` for in-call capture devices (`20/21/22/54`).
+
+### Expected effect
+- Single utterance should no longer duplicate at start.
+- Debug WAV pitch/speed should align better with natural speech for ASR.
+
 ## 2026-02-20 05:47 — Rolled back to fast non-streaming call path
 
 ### Why

@@ -602,6 +602,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             val chunkSamples = pcm.size / 2
             val rms = rmsPcm16(pcm)
             val voiced = rms >= UTTERANCE_VAD_RMS
+            var appendChunk = true
 
             if (!speakingNow) {
                 preRoll = appendAndTrimBytes(preRoll, pcm, thresholds.preRollMaxBytes)
@@ -612,6 +613,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 current.reset()
                 if (preRoll.isNotEmpty()) {
                     current.write(preRoll)
+                    appendChunk = false
                 }
                 speechSamples = chunkSamples
                 silenceSamples = 0
@@ -622,7 +624,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 silenceSamples += chunkSamples
             }
 
-            current.write(pcm)
+            if (appendChunk) {
+                current.write(pcm)
+            }
             chunkCount += 1
             val totalSamples = current.size() / 2
             val shouldFlush = totalSamples >= thresholds.maxTurnSamples || (
@@ -3338,7 +3342,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
         private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
-        private const val ROOT_CAPTURE_RATE_FIX_TO = 24_000
+        private const val ROOT_CAPTURE_RATE_FIX_TO = 16_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
