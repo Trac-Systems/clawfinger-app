@@ -2130,12 +2130,29 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun scoreAdaptiveTranscript(transcript: String): Int {
         val normalized = transcript
-            .replace(Regex("[^A-Za-z0-9]"), "")
+            .lowercase(Locale.US)
+            .replace(Regex("[^a-z0-9\\s']"), " ")
+            .replace(Regex("\\s+"), " ")
             .trim()
         if (normalized.isBlank()) {
             return 0
         }
-        return 1 + normalized.length.coerceAtMost(64)
+        val compact = normalized.filter { it.isLetterOrDigit() }
+        if (compact.isBlank()) {
+            return 0
+        }
+        val uniqueCharRatio = compact.toSet().size.toDouble() / compact.length.toDouble()
+        val tokens = normalized.split(" ").filter { it.isNotBlank() }
+        val uniqueTokenRatio = if (tokens.isEmpty()) {
+            0.0
+        } else {
+            tokens.toSet().size.toDouble() / tokens.size.toDouble()
+        }
+        val hasLongRun = Regex("(.)\\1{7,}").containsMatchIn(compact)
+        val runPenalty = if (hasLongRun) 0.25 else 1.0
+        val base = compact.length.coerceAtMost(48).toDouble()
+        val score = base * uniqueCharRatio * uniqueTokenRatio.coerceAtLeast(0.25) * runPenalty
+        return score.roundToInt().coerceAtLeast(0)
     }
 
     private fun transcribeUtteranceAdaptive(pcm: ByteArray, fallbackRate: Int): AdaptiveAsrResult? {
@@ -3387,9 +3404,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_RATE_FIX_TO = 16_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
         private const val ENABLE_ADAPTIVE_CAPTURE_RATE = true
-        private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 2
+        private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
-        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(16_000, 24_000, 32_000, 12_000, 8_000)
+        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(32_000, 24_000, 16_000)
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
         private const val KEEP_CALL_MUTED_DURING_TTS = true

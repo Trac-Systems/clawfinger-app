@@ -2080,6 +2080,31 @@ _Last updated: 2026-02-19_
 ### Notes
 - This enforces the requested rule: only “no information” is invalid; everything else is allowed.
 
+## 2026-02-20 07:58 — Adaptive-rate scorer corrected to avoid slow/low-pitch lock
+
+### Trigger
+- User reported latest call still sounding slow/low-pitched.
+- Forensic sweep on `rxm-1771570474270-vad-4.wav` showed:
+  - 12k interpretation produced pathological repeated `z...` transcript,
+  - 24k/32k produced intelligible `who's there?`.
+
+### Root cause
+- Previous adaptive scoring favored transcript length too strongly, so repetitive gibberish could win and lock a bad rate.
+- Candidate list included `12k`/`8k`, which increased chance of pathological lock.
+
+### Changes
+- Reworked adaptive transcript score:
+  - now weights unique-char ratio and unique-token ratio,
+  - penalizes long repeated character runs.
+- Tightened lock threshold:
+  - `ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE: 2 -> 4`.
+- Restricted adaptive rate candidates to telephony-relevant set:
+  - `[32000, 24000, 16000]` (removed `12000/8000`).
+
+### Expected effect
+- Prevent lock onto pathological low-rate interpretations.
+- Reduce slow/low-pitch artifacts from wrong per-call rate selection.
+
 ## 2026-02-20 05:47 — Rolled back to fast non-streaming call path
 
 ### Why
