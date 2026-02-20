@@ -2827,3 +2827,27 @@ _Last updated: 2026-02-19_
 ### Expected effect
 - No more long dead-air stalls in state-machine capture after playback problems.
 - Fallback probe path should trigger promptly when stream capture has no usable speech.
+
+## 2026-02-20 10:34 — Tighten fallback capture against pitch drift, clipping, and post-hangup noise
+
+### Why
+- User reported latest run still had:
+  - high-pitch fallback captures,
+  - clipped utterances,
+  - hangup/noise fragments being processed as turns.
+
+### Changes
+- Improved adaptive ASR selection behavior:
+  - candidate order now prioritizes `ROOT_CAPTURE_REQUEST_SAMPLE_RATE` (24k) before fallback raw rate,
+  - early-exit requires at least 2 adaptive attempts before stopping.
+- Hardened fallback turn loop against stale post-hangup processing:
+  - added live-call checks after capture and before transcript commit to prevent processing/saving end-of-call artifacts as active turns.
+- Raised fallback capture robustness for short clipped turns:
+  - capture windows increased from `[1800, 2200, 2600]` to `[2200, 2600, 3200]`.
+- Reduced false acceptance of tiny non-speech snippets:
+  - `ROOT_MIN_ACCEPT_VOICED_MS` raised from `120` to `180`.
+
+### Build/deploy
+- Rebuilt debug APK successfully.
+- Reinstalled and relaunched on Pixel.
+- Default dialer role remains `com.tracsystems.phonebridge`.

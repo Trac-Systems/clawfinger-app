@@ -386,6 +386,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                             return@repeat
                         }
                         consecutiveNoAudioRejects = 0
+                        if (!InCallStateHolder.hasLiveCall()) {
+                            speaking.set(false)
+                            return@execute
+                        }
                         capture.analysis?.let { analysis ->
                             maybeEnrollSpeaker(analysis)
                         }
@@ -466,6 +470,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         }
                         pinRootCaptureSource()
                         sameSourceRetries = 0
+                        if (!InCallStateHolder.hasLiveCall()) {
+                            speaking.set(false)
+                            return@execute
+                        }
                         transcriptPreview = candidateTranscript
                         transcriptAudioWav = candidateAudioWav
                         transcriptChunkCount = 1
@@ -2280,7 +2288,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     add(fallbackRate)
                 }
             } else {
-                add(fallbackRate)
+                add(ROOT_CAPTURE_REQUEST_SAMPLE_RATE)
+                if (fallbackRate != ROOT_CAPTURE_REQUEST_SAMPLE_RATE) {
+                    add(fallbackRate)
+                }
                 if (ENABLE_ADAPTIVE_CAPTURE_RATE && !adaptiveCaptureRateLocked) {
                     ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES.forEach { rate ->
                         if (!contains(rate)) {
@@ -2324,7 +2335,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (best == null || candidate.score > best!!.score) {
                 best = candidate
             }
-            if (rejectReason == null && score >= ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE) {
+            if (
+                rejectReason == null &&
+                score >= ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE &&
+                attempts >= MIN_ADAPTIVE_ASR_ATTEMPTS_BEFORE_EARLY_EXIT
+            ) {
                 break
             }
         }
@@ -3600,7 +3615,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_SKIP_QUALITY_GATES = true
         private const val ROOT_MIN_CAPTURE_RMS = 6.0
         private const val ROOT_MIN_ACCEPT_RMS = 22.0
-        private const val ROOT_MIN_ACCEPT_VOICED_MS = 120
+        private const val ROOT_MIN_ACCEPT_VOICED_MS = 180
         private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 24_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
         private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
@@ -3661,7 +3676,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
         private const val FIRST_TURNS_FORCE_FALLBACK = 1
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
-        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
+        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(2200, 2600, 3200)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 220
         private const val UTTERANCE_PRE_ROLL_MS = 900
@@ -3688,6 +3703,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_TRANSCRIPT_TOKEN_COUNT = 5
         private const val MIN_TRANSCRIPT_UNIQUE_RATIO = 0.45
         private const val TRANSCRIPT_ECHO_OVERLAP_THRESHOLD = 0.68
+        private const val MIN_ADAPTIVE_ASR_ATTEMPTS_BEFORE_EARLY_EXIT = 2
         private const val ENABLE_SPARK_TURN_STREAM = false
         private const val ENABLE_SPARK_STREAM_LIVE_PLAYBACK = false
         private const val SPARK_TURN_STREAM_READ_TIMEOUT_MS = 90_000
