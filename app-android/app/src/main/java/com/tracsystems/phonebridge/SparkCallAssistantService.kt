@@ -628,7 +628,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         var speechSamples = 0
         var silenceSamples = 0
         var chunkCount = 0
-        var loopMs = 0
+        val captureStartedAtMs = System.currentTimeMillis()
         var sampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
         val fastEndpointMode = System.currentTimeMillis() - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
         val updateDerivedThresholds = {
@@ -646,13 +646,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         var thresholds = updateDerivedThresholds()
 
-        while (loopMs < UTTERANCE_LOOP_TIMEOUT_MS && InCallStateHolder.hasLiveCall()) {
+        while (InCallStateHolder.hasLiveCall()) {
+            val elapsedMs = (System.currentTimeMillis() - captureStartedAtMs).toInt()
+            if (elapsedMs >= UTTERANCE_LOOP_TIMEOUT_MS) {
+                break
+            }
             val streamSession = ensureRootCaptureStreamSession()
             if (streamSession == null) {
                 consecutiveNoAudioRejects += 1
                 maybeRecoverRootRoute()
-                loopMs += UTTERANCE_CAPTURE_CHUNK_MS
-                if (!speakingNow && loopMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
+                if (!speakingNow && elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
                     CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:stream_session_null")
                     return null
                 }
@@ -663,7 +666,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 thresholds = updateDerivedThresholds()
             }
             val captured = readRootCaptureStreamChunk(streamSession, UTTERANCE_CAPTURE_CHUNK_MS)
-            loopMs += UTTERANCE_CAPTURE_CHUNK_MS
             if (captured == null || captured.pcm.size < 2) {
                 consecutiveNoAudioRejects += 1
                 maybeRecoverRootRoute()
@@ -679,7 +681,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     if (silenceSamples >= thresholds.silenceSamplesLimit && speechSamples >= thresholds.minSpeechSamples) {
                         break
                     }
-                } else if (loopMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
+                } else if (elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
                     CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:empty_chunk")
                     return null
                 }
@@ -696,7 +698,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 preRoll = appendAndTrimBytes(preRoll, pcm, thresholds.preRollMaxBytes)
                 if (!voiced) {
                     appendRootRollingPrebuffer(captured)
-                    if (loopMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
+                    if (elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
                         CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:unvoiced")
                         return null
                     }

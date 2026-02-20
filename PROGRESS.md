@@ -2806,3 +2806,24 @@ _Last updated: 2026-02-19_
 - Rebuilt debug APK successfully.
 - Reinstalled and relaunched on Pixel.
 - Default dialer role remains `com.tracsystems.phonebridge`.
+
+## 2026-02-20 10:27 — Fix post-turn stall due timeout accounting bug in utterance state machine
+
+### Observed in latest call (`latest-call-20260220-102429`)
+- First user turn was captured and corrected by adaptive fallback rate (`48000 -> 24000`), transcript became accurate.
+- After reply playback failure, next capture started but no further turn logs were emitted before call end.
+
+### Root cause
+- `captureUtteranceStateMachine()` used a synthetic counter (`loopMs += chunkMs`) for timeout checks.
+- Each iteration can block much longer than `chunkMs` (stream read timeout is ~1100ms), so no-speech/loop timeouts were delayed far beyond intended values.
+- Result: apparent hang after first/second turn.
+
+### Fix
+- Replaced synthetic loop counter with wall-clock elapsed timing:
+  - track `captureStartedAtMs`,
+  - enforce `UTTERANCE_LOOP_TIMEOUT_MS` and `UTTERANCE_NO_SPEECH_TIMEOUT_MS` using real elapsed milliseconds.
+- This keeps no-speech bailout behavior aligned with configured timeouts even under slow stream reads.
+
+### Expected effect
+- No more long dead-air stalls in state-machine capture after playback problems.
+- Fallback probe path should trigger promptly when stream capture has no usable speech.
