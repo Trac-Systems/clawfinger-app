@@ -3262,3 +3262,5 @@ _Last updated: 2026-02-19_
 ### Validation
 - Android module compiles cleanly:
   - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- Deployed updated debug app to Pixel:
+  - `cd app-android && ./gradlew :app:installDebug` passed (`59191FDCH000YV`).
