@@ -2703,3 +2703,18 @@ _Last updated: 2026-02-19_
 ### Build/deploy
 - Rebuilt and reinstalled debug APK successfully.
 - Default dialer role remains `com.tracsystems.phonebridge`.
+
+## 2026-02-20 09:59 — Faster post-reply turn finalization
+
+### User issue
+- Right after assistant finishes talking, user responses felt delayed and often had to be repeated.
+
+### Change
+- Added dynamic fast endpoint mode for the immediate post-playback window:
+  - track assistant playback completion timestamp,
+  - for first 6s after playback, reduce trailing silence threshold from `1100ms` to `600ms`.
+- This only affects post-reply responsiveness; normal turn capture remains unchanged outside that window.
+
+### Build/deploy
+- Rebuilt and reinstalled debug APK successfully.
+- Default dialer role still `com.tracsystems.phonebridge`.

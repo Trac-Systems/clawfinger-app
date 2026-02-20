@@ -71,6 +71,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val speaking = AtomicBoolean(false)
     private val callMuteEnforced = AtomicBoolean(false)
     private val lastSpeechActivityAtMs = AtomicLong(0L)
+    private val lastPlaybackEndedAtMs = AtomicLong(0L)
     private val rootBootstrapInFlight = AtomicBoolean(false)
     @Volatile
     private var rootBootstrapDone = false
@@ -286,6 +287,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (rootPlayback.played) {
                 CommandAuditLog.add("voice_bridge:greeting_root:${reply.take(96)}")
                 speaking.set(false)
+                lastPlaybackEndedAtMs.set(System.currentTimeMillis())
                 startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
                 return@execute
             }
@@ -514,6 +516,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     lastAssistantReplyText = cleanReply
                     markSpeechActivity("root_reply_played")
                     speaking.set(false)
+                    lastPlaybackEndedAtMs.set(System.currentTimeMillis())
                     startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
                     return@execute
                 }
@@ -579,10 +582,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         var chunkCount = 0
         var loopMs = 0
         var sampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+        val fastEndpointMode = System.currentTimeMillis() - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
         val updateDerivedThresholds = {
             val preRollMaxBytes = ((sampleRate * UTTERANCE_PRE_ROLL_MS) / 1000) * 2
             val minSpeechSamples = (sampleRate * UTTERANCE_MIN_SPEECH_MS) / 1000
-            val silenceSamplesLimit = (sampleRate * UTTERANCE_SILENCE_MS) / 1000
+            val silenceMs = if (fastEndpointMode) FAST_POST_PLAYBACK_SILENCE_MS else UTTERANCE_SILENCE_MS
+            val silenceSamplesLimit = (sampleRate * silenceMs) / 1000
             val maxTurnSamples = (sampleRate * UTTERANCE_MAX_TURN_MS) / 1000
             EndpointThresholds(
                 preRollMaxBytes = preRollMaxBytes,
@@ -3535,7 +3540,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_MIN_CAPTURE_RMS = 6.0
         private const val ROOT_MIN_ACCEPT_RMS = 22.0
         private const val ROOT_MIN_ACCEPT_VOICED_MS = 120
-        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 48_000
+        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 24_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
         private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
         private const val ROOT_CAPTURE_PRECISE_PADDING_MS = 220
@@ -3554,7 +3559,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 100
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
-        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(48_000, 32_000, 24_000, 16_000, 8_000)
+        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(24_000, 48_000, 32_000, 16_000, 8_000)
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
         private const val ROOT_CAPTURE_RATE_FIX_ENABLED = false
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
@@ -3564,7 +3569,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE = 11
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
-        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(24_000, 32_000, 16_000)
+        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(24_000, 32_000, 16_000, 48_000)
         private const val ROOT_ROLLING_PREBUFFER_MS = 1_000
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
@@ -3600,6 +3605,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_PRE_ROLL_MS = 900
         private const val UTTERANCE_MIN_SPEECH_MS = 220
         private const val UTTERANCE_SILENCE_MS = 1_100
+        private const val FAST_POST_PLAYBACK_SILENCE_MS = 600
+        private const val FAST_POST_PLAYBACK_WINDOW_MS = 6_000L
         private const val UTTERANCE_MAX_TURN_MS = 16_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
         private const val UTTERANCE_VAD_RMS = 80.0
