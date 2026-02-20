@@ -533,6 +533,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 transcriptPreview = assembledUtterance.transcript
                 transcriptAudioWav = assembledUtterance.audioWav
                 transcriptChunkCount = assembledUtterance.chunkCount
+                if (lastAssistantReplyText.isNotBlank() && transcriptPreview.isNotBlank()) {
+                    val overlap = tokenOverlapRatio(transcriptPreview, lastAssistantReplyText)
+                    if (overlap >= TURN_ECHO_REJECT_OVERLAP_THRESHOLD) {
+                        CommandAuditLog.add("voice_bridge:turn_echo_reject:overlap=${"%.2f".format(overlap)}")
+                        Log.w(
+                            TAG,
+                            "rejecting likely echo turn overlap=${"%.2f".format(overlap)} transcript=${transcriptPreview.take(120)}",
+                        )
+                        speaking.set(false)
+                        startCaptureLoop(ECHO_RETRY_DELAY_MS)
+                        return@execute
+                    }
+                }
                 val skipAsrForTurn = transcriptPreview.isNotBlank()
                 if (!skipAsrForTurn) {
                     val reason = "local_asr_empty"
@@ -2530,10 +2543,41 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun sanitizeReply(input: String): String {
-        return input
+        val cleaned = input
             .replace(Regex("[*`_~]"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
+        if (cleaned.isBlank()) {
+            return cleaned
+        }
+        val sentenceRegex = Regex("(?<=[.!?])\\s+")
+        val sentences = cleaned
+            .split(sentenceRegex)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (sentences.isEmpty()) {
+            return cleaned.take(MAX_REPLY_CHARS).trimEnd()
+        }
+        val deduped = mutableListOf<String>()
+        for (sentence in sentences) {
+            val previous = deduped.lastOrNull()
+            if (previous != null) {
+                val overlap = tokenOverlapRatio(sentence, previous)
+                if (overlap >= REPLY_SENTENCE_DEDUP_OVERLAP_THRESHOLD) {
+                    continue
+                }
+            }
+            deduped.add(sentence)
+            if (deduped.size >= MAX_REPLY_SENTENCES) {
+                break
+            }
+        }
+        val clipped = deduped.joinToString(" ").trim().ifBlank { cleaned }
+        return if (clipped.length > MAX_REPLY_CHARS) {
+            clipped.take(MAX_REPLY_CHARS).trimEnd()
+        } else {
+            clipped
+        }
     }
 
     private fun shellQuote(input: String): String = "'${input.replace("'", "'\"'\"'")}'"
@@ -3783,13 +3827,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_STRICT_STREAM_ONLY = true
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 220
         private const val UTTERANCE_PRE_ROLL_MS = 1_200
-        private const val UTTERANCE_MIN_SPEECH_MS = 140
+        private const val UTTERANCE_MIN_SPEECH_MS = 100
         private const val UTTERANCE_SILENCE_MS = 520
-        private const val FAST_POST_PLAYBACK_SILENCE_MS = 320
+        private const val FAST_POST_PLAYBACK_SILENCE_MS = 220
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 6_000L
         private const val UTTERANCE_MAX_TURN_MS = 16_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
-        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 3_600
+        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 1_600
         private const val UTTERANCE_VAD_RMS = 80.0
         private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
         private const val UTTERANCE_VAD_RMS_FALLBACK = 120.0
@@ -3816,6 +3860,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_SPARK_TURN_STREAM = false
         private const val ENABLE_SPARK_STREAM_LIVE_PLAYBACK = false
         private const val SPARK_TURN_STREAM_READ_TIMEOUT_MS = 90_000
+        private const val TURN_ECHO_REJECT_OVERLAP_THRESHOLD = 0.70
+        private const val ECHO_RETRY_DELAY_MS = 120L
+        private const val MAX_REPLY_SENTENCES = 3
+        private const val MAX_REPLY_CHARS = 320
+        private const val REPLY_SENTENCE_DEDUP_OVERLAP_THRESHOLD = 0.85
         private val LOW_QUALITY_TRANSCRIPT_PATTERNS = listOf(
             Regex("^(no\\s+){6,}no$"),
             Regex("^([.\\-]\\s*){8,}$"),

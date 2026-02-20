@@ -3056,3 +3056,33 @@ _Last updated: 2026-02-19_
 ### Next
 1. Rebuild/install APK.
 2. Run new call, pull latest-only artifacts, verify `rxm` sample-rate and pitch.
+
+## 2026-02-20 15:35 — Fix post-reply dead window and duplicate/loud replay symptoms
+
+### What
+- Added assistant-echo turn rejection before sending a new turn:
+  - reject captured user transcript if overlap with last assistant reply is high.
+  - immediate fast retry (`ECHO_RETRY_DELAY_MS = 120`).
+- Tuned post-playback turn detection to respond faster:
+  - `UTTERANCE_MIN_SPEECH_MS: 140 -> 100`
+  - `FAST_POST_PLAYBACK_SILENCE_MS: 320 -> 220`
+  - `UTTERANCE_NO_SPEECH_TIMEOUT_MS: 3600 -> 1600`
+- Hardened spoken reply cleanup to reduce repeated "double" answers:
+  - sentence-level de-duplication,
+  - max 3 sentences,
+  - max 320 chars before playback.
+
+### Why
+- User reported immediate follow-up utterances being dropped unless repeated.
+- User reported long/max-token replies occasionally repeating with perceived double loudness.
+- Root causes are likely post-playback echo being re-consumed as a fresh user turn and overly conservative post-playback endpoint timings.
+
+### Result
+- Turn loop now suppresses likely self-echo turns.
+- Voice gateway replies are clipped/deduped before playback, reducing repeated long-tail restarts.
+- Turn acquisition after assistant playback is more aggressive.
+
+### Next
+1. Rebuild/install and run live call.
+2. Pull latest-only artifacts.
+3. Verify: immediate follow-up accepted, no duplicate loud replay.
