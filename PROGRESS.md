@@ -2508,3 +2508,28 @@ _Last updated: 2026-02-19_
 
 ### Deploy
 - Rebuilt and reinstalled debug APK successfully.
+
+## 2026-02-20 08:15 — Removed lexical overfit gates; kept generic transcript quality checks
+
+### Trigger
+- User rejected lexical token blocking as overfit (`who/there/...` style lists and slang-specific single-token rules).
+
+### Changes
+- Removed lexical low-information token allow/deny lists from transcript rejection path.
+- Removed single-token slang-specific rejection list.
+- Kept only generic transcript quality filters:
+  - empty/short alnum,
+  - repetitive character runs / low character diversity on long spans,
+  - repetitive-token ratio,
+  - explicit low-quality phrase patterns.
+- Kept local-ASR adaptive scorer tied to generic reject reasons only.
+- Added server-ASR fallback when local ASR yields no usable transcript:
+  - state-machine now still forwards merged utterance audio,
+  - turn call uses `skip_asr=false` when local transcript is empty.
+
+### Validation
+- Android app rebuilt (`assembleDebug`) and installed on Pixel successfully.
+- Local automated suite passed:
+  - `npm run test:unit`
+  - `npm run test:integration`
+  - `npm run test:e2e-sim`

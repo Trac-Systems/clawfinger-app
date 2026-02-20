@@ -391,24 +391,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     CommandAuditLog.add("voice_bridge:asr:${candidateTranscript.take(96)}")
                     val transcriptRejectReason = transcriptRejectReason(candidateTranscript)
                     if (transcriptRejectReason != null) {
-                        if (transcriptRejectReason == "low_information") {
-                            Log.w(
-                                TAG,
-                                "spark ASR transcript low-information; forwarding full audio to server ASR",
-                            )
-                            CommandAuditLog.add("voice_bridge:transcript_reject_soft:low_information")
+                        Log.w(TAG, "spark ASR transcript rejected as no-information ($transcriptRejectReason)")
+                        CommandAuditLog.add("voice_bridge:transcript_reject:$transcriptRejectReason")
+                        lastRejectionReason = "low_quality_transcript"
+                        if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
+                            sameSourceRetries += 1
                         } else {
-                            Log.w(TAG, "spark ASR transcript rejected as low quality ($transcriptRejectReason)")
-                            CommandAuditLog.add("voice_bridge:transcript_reject:$transcriptRejectReason")
-                            lastRejectionReason = "low_quality_transcript"
-                            if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
-                                sameSourceRetries += 1
-                            } else {
-                                sameSourceRetries = 0
-                                rotateRootCaptureSource()
-                            }
-                            return@repeat
+                            sameSourceRetries = 0
+                            rotateRootCaptureSource()
                         }
+                        return@repeat
                     }
                     pinRootCaptureSource()
                     sameSourceRetries = 0
@@ -417,7 +409,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     transcriptChunkCount = 1
                 }
             }
-            if (transcriptPreview.isBlank()) {
+            if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
                 val clarificationSpoken = maybeSpeakClarification(lastRejectionReason)
                 if (!clarificationSpoken) {
                     speaking.set(false)
@@ -429,6 +421,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     startCaptureLoop(retryDelay)
                 }
                 return@execute
+            }
+            val skipAsrForTurn = transcriptPreview.isNotBlank()
+            if (!skipAsrForTurn) {
+                CommandAuditLog.add("voice_bridge:turn_server_asr_fallback")
             }
             val seedAudio = transcriptAudioWav ?: buildSilenceWav(320)
             val assembledUtterance = if (!ENABLE_UTTERANCE_STATE_MACHINE && ENABLE_UTTERANCE_CONTINUATION && shouldCollectContinuation(transcriptPreview)) {
@@ -453,9 +449,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             val response = runCatching {
                 callSparkTurn(
-                    transcript = transcriptPreview,
+                    transcript = transcriptPreview.takeIf { it.isNotBlank() },
                     audioWav = transcriptAudioWav ?: buildSilenceWav(320),
-                    skipAsr = true,
+                    skipAsr = skipAsrForTurn,
                 )
             }.onFailure { error ->
                 Log.e(TAG, "spark text turn failed", error)
@@ -653,9 +649,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } else {
             utterancePcm
         }
-        val adaptiveAsr = transcribeUtteranceAdaptive(cappedPcm, sampleRate) ?: return null
-        val utteranceWav = adaptiveAsr.wav
-        val transcript = adaptiveAsr.transcript
+        val adaptiveAsr = transcribeUtteranceAdaptive(cappedPcm, sampleRate)
+        val utteranceWav = adaptiveAsr?.wav ?: pcm16ToWav(cappedPcm, sampleRate)
+        val transcript = adaptiveAsr?.transcript.orEmpty()
         if (ENABLE_DEBUG_WAV_DUMP) {
             persistDebugWav(
                 prefix = "rxm",
@@ -664,6 +660,18 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             )
         }
         pinRootCaptureSource()
+        if (transcript.isBlank()) {
+            CommandAuditLog.add("voice_bridge:asr_local_empty")
+            Log.i(
+                TAG,
+                "state-machine utterance local ASR empty; forwarding audio for server ASR chunks=$chunkCount speechSamples=$speechSamples silenceSamples=$silenceSamples",
+            )
+            return AssembledUtterance(
+                transcript = "",
+                audioWav = utteranceWav,
+                chunkCount = max(1, chunkCount),
+            )
+        }
         Log.i(
             TAG,
             "state-machine utterance transcript=${transcript.take(140)} chunks=$chunkCount speechSamples=$speechSamples silenceSamples=$silenceSamples",
@@ -765,7 +773,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 continue
             }
             val rejectReason = transcriptRejectReason(continuationTranscript)
-            if (rejectReason != null && rejectReason != "low_information") {
+            if (rejectReason != null) {
                 CommandAuditLog.add("voice_bridge:transcript_reject_cont:$rejectReason")
                 boundaryWindows += 1
                 Log.i(
@@ -776,9 +784,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     break
                 }
                 continue
-            }
-            if (rejectReason == "low_information") {
-                CommandAuditLog.add("voice_bridge:transcript_reject_cont_soft:low_information")
             }
             boundaryWindows = 0
             pinRootCaptureSource()
@@ -2189,7 +2194,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 ?.trim()
                 .orEmpty()
             attempts += 1
-            val score = scoreAdaptiveTranscript(transcript)
+            val rejectReason = transcriptRejectReason(transcript)
+            val score = if (rejectReason == null) {
+                scoreAdaptiveTranscript(transcript)
+            } else {
+                0
+            }
+            if (rejectReason != null) {
+                CommandAuditLog.add("voice_bridge:adaptive_reject:r${rate}:${rejectReason}")
+            }
             val candidate = AdaptiveAsrResult(
                 transcript = transcript,
                 wav = wav,
@@ -2236,7 +2249,38 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             .replace(Regex("[^a-z0-9\\s']"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
-        return if (normalized.isBlank()) "empty_normalized" else null
+        if (normalized.isBlank()) {
+            return "empty_normalized"
+        }
+        if (LOW_QUALITY_TRANSCRIPT_PATTERNS.any { pattern -> pattern.matches(normalized) }) {
+            return "low_quality_pattern"
+        }
+
+        val alphaNum = normalized.filter { it.isLetterOrDigit() }
+        if (alphaNum.length < MIN_TRANSCRIPT_ALNUM_CHARS) {
+            return "short_alnum"
+        }
+
+        if (Regex("(.)\\1{7,}").containsMatchIn(alphaNum)) {
+            return "repetitive_chars"
+        }
+        val uniqueCharRatio = alphaNum.toSet().size.toDouble() / alphaNum.length.toDouble()
+        if (alphaNum.length >= 24 && uniqueCharRatio < 0.18) {
+            return "low_char_diversity"
+        }
+
+        val tokens = normalized.split(" ").filter { it.isNotBlank() }
+        val coreTokens = tokens.filter { it.length >= 2 }
+        if (coreTokens.isEmpty()) {
+            return "no_tokens"
+        }
+        if (coreTokens.size >= 5) {
+            val uniqueTokenRatio = coreTokens.toSet().size.toDouble() / coreTokens.size.toDouble()
+            if (uniqueTokenRatio < 0.34) {
+                return "repetitive_tokens"
+            }
+        }
+        return null
     }
 
     private fun sanitizeReply(input: String): String {
@@ -3459,24 +3503,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_TRANSCRIPT_TOKEN_COUNT = 5
         private const val MIN_TRANSCRIPT_UNIQUE_RATIO = 0.45
         private const val TRANSCRIPT_ECHO_OVERLAP_THRESHOLD = 0.68
-        private const val LOW_INFORMATION_MAX_TOKENS = 5
         private const val ENABLE_SPARK_TURN_STREAM = false
         private const val ENABLE_SPARK_STREAM_LIVE_PLAYBACK = false
         private const val SPARK_TURN_STREAM_READ_TIMEOUT_MS = 90_000
-        private val LOW_INFORMATION_TOKENS = setOf(
-            "hi",
-            "hello",
-            "hey",
-            "who",
-            "who's",
-            "whos",
-            "there",
-            "is",
-            "was",
-            "so",
-            "good",
-            "day",
-        )
         private val LOW_QUALITY_TRANSCRIPT_PATTERNS = listOf(
             Regex("^(no\\s+){4,}no$"),
             Regex("^([.\\-]\\s*){6,}$"),
@@ -3484,8 +3513,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Regex("^(take\\s+care(\\s+and)?\\s+(bye|bye\\s*bye|goodbye)[.!]?)$"),
             Regex("^(see\\s+you\\s+next\\s+week[.!]?)$"),
             Regex("^(you\\s+know[.!?]?)$"),
-            Regex("^((hi|hello|hey)\\s+)*(who('s)?\\s+there)[.!?]?$"),
-            Regex("^((so|good\\s+day)\\s+)*(who\\s+was\\s+there)[.!?]?$"),
             Regex("^(yeah|yep|uh|hmm|mmm|ok|okay|sure|alright|i\\s+get\\s+you|thank\\s+you|you\\s*re\\s+welcome)(\\s+(yeah|yep|uh|hmm|mmm|ok|okay|sure|alright|i\\s+get\\s+you|thank\\s+you|you\\s*re\\s+welcome))*$"),
         )
         private val SOURCE_ROTATE_IMMEDIATELY_REASONS = setOf(
