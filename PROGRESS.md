@@ -2960,3 +2960,30 @@ _Last updated: 2026-02-19_
 1. Run fresh live-call validation on this new baseline and pull only per-call artifacts.
 2. Tune VAD/start/end thresholds from real-call logs (not synthetic).
 3. Remove any remaining dead fallback branches once V2 flow is confirmed stable.
+
+## 2026-02-20 14:58 — Enforce strict stream-only mode (remove hybrid fallback in-call)
+
+### What
+- Removed in-call hybrid behavior where state-machine empty events fell back to probe captures.
+- `requestReplyFromAudioFallback()` now:
+  - retries capture loop immediately on `utterance_empty` in strict mode,
+  - skips fixed fallback probe path while call is active.
+- Forced deterministic call capture defaults:
+  - `ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 16000`,
+  - `ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = [16000]`,
+  - `ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = [16000]`,
+  - `FIRST_TURNS_FORCE_FALLBACK = 0`,
+  - `ENABLE_STRICT_STREAM_ONLY = true`.
+- Kept WebRTC VAD path active for turn detection and rebuilt/reinstalled APK.
+
+### Why
+- Latest live logs showed hybrid fallback re-entering non-deterministic probe path (`voice_downlink` probes), causing clipping, missed turns, and inconsistent context.
+- This contradicted the researched architecture requirement: one continuous stream + one deterministic endpointing path.
+
+### Result
+- New build is installed on Pixel with strict stream-only in-call behavior.
+- Expected immediate effect: no probe-capture path during active calls; fewer clipped/misaligned turns.
+
+### Next
+1. Run fresh live call and verify logs contain no in-call fallback probe branch.
+2. Pull only current-call WAV/transcripts and tune VAD thresholds from that run.

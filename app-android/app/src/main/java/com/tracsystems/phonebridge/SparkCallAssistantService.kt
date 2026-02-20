@@ -343,21 +343,27 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 var transcriptChunkCount = 0
                 var lastRejectionReason: String? = null
                 var sameSourceRetries = 0
-                val useStateMachine = ENABLE_UTTERANCE_STATE_MACHINE && forceFallbackTurnsRemaining <= 0
+                val useStateMachine = ENABLE_UTTERANCE_STATE_MACHINE
                 if (useStateMachine) {
                     val utterance = captureUtteranceStateMachine()
                     if (utterance == null) {
                         lastRejectionReason = "utterance_empty"
+                        if (ENABLE_STRICT_STREAM_ONLY) {
+                            Log.w(TAG, "state-machine utterance empty; strict stream mode retry")
+                            speaking.set(false)
+                            startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
+                            return@execute
+                        }
                         Log.w(TAG, "state-machine utterance empty; falling back to fixed capture probes")
                     } else {
                         transcriptPreview = utterance.transcript
                         transcriptAudioWav = utterance.audioWav
                         transcriptChunkCount = utterance.chunkCount
                     }
-                } else {
+                } else if (!ENABLE_STRICT_STREAM_ONLY) {
                     CommandAuditLog.add("voice_bridge:first_turn_force_fallback")
                 }
-                if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
+                if (transcriptPreview.isBlank() && transcriptAudioWav == null && !ENABLE_STRICT_STREAM_ONLY) {
                     repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
                         if (transcriptPreview.isNotBlank()) {
                             return@repeat
@@ -491,6 +497,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                             CommandAuditLog.add("voice_bridge:first_turn_fallback_done")
                         }
                     }
+                }
+                if (transcriptPreview.isBlank() && transcriptAudioWav == null && ENABLE_STRICT_STREAM_ONLY) {
+                    speaking.set(false)
+                    startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
+                    return@execute
                 }
                 if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
                     val clarificationSpoken = maybeSpeakClarification(lastRejectionReason)
@@ -3716,7 +3727,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_MIN_ACCEPT_VOICED_MS = 90
         private const val ROOT_MIN_ACCEPT_DYNAMIC_RANGE = 35.0
         private const val ROOT_MIN_ACCEPT_CONFIDENCE = 0.62
-        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 24_000
+        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 16_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
         private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
         private const val ROOT_CAPTURE_PRECISE_PADDING_MS = 220
@@ -3736,18 +3747,18 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 70
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
-        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(24_000, 16_000)
+        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(16_000)
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
         private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
         private const val ROOT_CAPTURE_RATE_FIX_FROM_ALT = 48_000
-        private const val ROOT_CAPTURE_RATE_FIX_TO = 24_000
+        private const val ROOT_CAPTURE_RATE_FIX_TO = 16_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
         private const val ENABLE_ADAPTIVE_CAPTURE_RATE = false
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE = 11
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
-        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(24_000)
+        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(16_000)
         private const val ROOT_ROLLING_PREBUFFER_MS = 1_200
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
@@ -3776,10 +3787,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_REQUIRE_ASR = true
         private const val BARGE_IN_MIN_ALNUM_CHARS = 2
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
-        private const val FIRST_TURNS_FORCE_FALLBACK = 1
+        private const val FIRST_TURNS_FORCE_FALLBACK = 0
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
+        private const val ENABLE_STRICT_STREAM_ONLY = true
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 220
         private const val UTTERANCE_PRE_ROLL_MS = 1_200
         private const val UTTERANCE_MIN_SPEECH_MS = 140
