@@ -2922,3 +2922,41 @@ _Last updated: 2026-02-19_
 ### Build/deploy
 - Rebuilt APK successfully.
 - Reinstalled debug APK to Pixel (`com.tracsystems.phonebridge` still default dialer).
+
+## 2026-02-20 14:15 — V2 reset started: deterministic call capture + WebRTC VAD turn engine
+
+### What
+- Replaced the old broad plan with a concrete V2 recovery plan in `PLAN.md`:
+  - single production capture path,
+  - fixed per-call capture rate,
+  - micro preprocessor fixed to WebRTC VAD,
+  - explicit acceptance gates for pitch/clipping/short-turn handling.
+- Removed tracked artifacts from the failed simulation path:
+  - deleted `scripts/build-web-audio-corpus.sh`,
+  - deleted `scripts/replay-turns-against-spark.sh`,
+  - deleted `scripts/simulate-stream-capture.mjs`.
+- Integrated WebRTC VAD into Android capture logic:
+  - added dependency `com.github.gkonovalov.android-vad:webrtc:2.0.9`,
+  - initialized and used `VadWebRTC` for chunk speech detection in `captureUtteranceStateMachine()`.
+- Reset runtime toward deterministic behavior:
+  - state-machine capture re-enabled as primary path,
+  - utterance continuation disabled,
+  - adaptive capture-rate locking disabled,
+  - sample-rate candidates reduced to `24k` then `16k`,
+  - rolling prebuffer and trailing extension tuned up,
+  - low-information rejection patterns reduced to strict garbage-only rules.
+- Cleared local `phone/debug-wavs` artifacts before fresh validation.
+
+### Why
+- Current pipeline had converged to unstable behavior (pitch flips, clipping, skipped short turns).
+- We needed to stop incremental heuristic patching and enforce one deterministic capture+endpointing path.
+
+### Result
+- Debug APK builds successfully after dependency/version pinning (`2.0.9` avoids Kotlin metadata mismatch from `2.0.10`).
+- APK reinstalled successfully on Pixel; default dialer role remains valid.
+- Codebase now contains V2 foundation for model-driven endpointing rather than RMS-only gating.
+
+### Next
+1. Run fresh live-call validation on this new baseline and pull only per-call artifacts.
+2. Tune VAD/start/end thresholds from real-call logs (not synthetic).
+3. Remove any remaining dead fallback branches once V2 flow is confirmed stable.

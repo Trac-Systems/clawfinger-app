@@ -21,6 +21,10 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import com.konovalov.vad.webrtc.VadWebRTC
+import com.konovalov.vad.webrtc.config.FrameSize as VadFrameSize
+import com.konovalov.vad.webrtc.config.Mode as VadMode
+import com.konovalov.vad.webrtc.config.SampleRate as VadSampleRate
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
@@ -62,6 +66,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val rootRollingPrebufferLock = Any()
     private var rootRollingPrebufferPcm: ByteArray = ByteArray(0)
     private var rootRollingPrebufferSampleRate: Int = 0
+    private var turnVad: VadWebRTC? = null
     @Volatile
     private var lastAssistantReplyText: String = ""
     private var currentVoiceCallVolume: Int = -1
@@ -146,8 +151,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             sessionId = null
             selectedAudioSource = null
             selectedRootCaptureSource = ROOT_CAPTURE_CANDIDATES.firstOrNull()
-            selectedRootCaptureSampleRate = null
-            selectedRootCaptureChannels = null
+            selectedRootCaptureSampleRate = ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+            selectedRootCaptureChannels = 1
             selectedRootPlaybackDevice = null
             adaptiveCaptureSampleRate = null
             adaptiveCaptureRateLocked = false
@@ -157,6 +162,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             consecutiveNoAudioRejects = 0
             enrolledSpeaker = null
             lastAssistantReplyText = ""
+            runCatching { turnVad?.close() }
+            turnVad = null
             rootCapturePinned = false
             forceFallbackTurnsRemaining = FIRST_TURNS_FORCE_FALLBACK
             fallbackPromptAtMs.set(0L)
@@ -192,6 +199,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         stopRootCaptureStreamSession("service_destroy")
         clearRootRollingPrebuffer()
+        runCatching { turnVad?.close() }
+        turnVad = null
         restoreRootCallRouteProfile()
         networkExecutor.shutdownNow()
         CommandAuditLog.add("voice_bridge:stop")
@@ -699,7 +708,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             val pcm = captured.pcm
             val chunkSamples = pcm.size / 2
             val rms = rmsPcm16(pcm)
-            val voiced = rms >= UTTERANCE_VAD_RMS
+            val voiced = if (ENABLE_WEBRTC_VAD_TURN_DETECT) {
+                val speechByVad = isSpeechChunkByVad(pcm, sampleRate)
+                speechByVad || rms >= UTTERANCE_VAD_RMS_FALLBACK
+            } else {
+                rms >= UTTERANCE_VAD_RMS
+            }
             var appendChunk = true
 
             if (!speakingNow) {
@@ -2147,6 +2161,61 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             sum += value * value
         }
         return sqrt(sum / samples)
+    }
+
+    private fun ensureTurnVad(): VadWebRTC? {
+        val existing = turnVad
+        if (existing != null) {
+            return existing
+        }
+        val vad = runCatching {
+            VadWebRTC(
+                sampleRate = VadSampleRate.SAMPLE_RATE_16K,
+                frameSize = VadFrameSize.FRAME_SIZE_320,
+                mode = VadMode.AGGRESSIVE,
+                speechDurationMs = WEBRTC_VAD_SPEECH_MS,
+                silenceDurationMs = WEBRTC_VAD_SILENCE_MS,
+            )
+        }.onFailure { error ->
+            Log.e(TAG, "failed to initialize WebRTC VAD", error)
+            CommandAuditLog.add("voice_bridge:vad_init_error:${error.message}")
+        }.getOrNull()
+        turnVad = vad
+        return vad
+    }
+
+    private fun isSpeechChunkByVad(pcm: ByteArray, sampleRate: Int): Boolean {
+        val vad = ensureTurnVad() ?: return false
+        if (pcm.size < 2 || sampleRate <= 0) return false
+        val mono16k = if (sampleRate == 16_000) {
+            pcm
+        } else {
+            resamplePcm16Mono(
+                pcm = pcm,
+                fromSampleRate = sampleRate,
+                toSampleRate = 16_000,
+            )
+        }
+        val frameBytes = WEBRTC_VAD_FRAME_SAMPLES * 2
+        if (mono16k.size < frameBytes) {
+            return false
+        }
+        var frames = 0
+        var speechFrames = 0
+        var offset = 0
+        while (offset + frameBytes <= mono16k.size) {
+            val frame = mono16k.copyOfRange(offset, offset + frameBytes)
+            if (runCatching { vad.isSpeech(frame) }.getOrDefault(false)) {
+                speechFrames += 1
+            }
+            frames += 1
+            offset += frameBytes
+        }
+        if (frames == 0) {
+            return false
+        }
+        val speechRatio = speechFrames.toDouble() / frames.toDouble()
+        return speechFrames >= 1 && speechRatio >= WEBRTC_VAD_MIN_SPEECH_FRAME_RATIO
     }
 
     private fun analyzeCapture(bytes: ByteArray, sampleRate: Int): CaptureAnalysis {
@@ -3662,24 +3731,24 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
         private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.30
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
-        private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 1_200
+        private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 1_400
         private const val ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS = 320
         private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 70
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
-        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(24_000, 48_000, 32_000, 16_000, 8_000)
+        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(24_000, 16_000)
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
         private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
         private const val ROOT_CAPTURE_RATE_FIX_FROM_ALT = 48_000
         private const val ROOT_CAPTURE_RATE_FIX_TO = 24_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
-        private const val ENABLE_ADAPTIVE_CAPTURE_RATE = true
+        private const val ENABLE_ADAPTIVE_CAPTURE_RATE = false
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE = 11
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
-        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(24_000, 32_000, 16_000, 48_000)
-        private const val ROOT_ROLLING_PREBUFFER_MS = 1_000
+        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(24_000)
+        private const val ROOT_ROLLING_PREBUFFER_MS = 1_200
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
         private const val KEEP_CALL_MUTED_DURING_TTS = true
@@ -3710,18 +3779,24 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val FIRST_TURNS_FORCE_FALLBACK = 1
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
-        private const val ENABLE_UTTERANCE_STATE_MACHINE = false
+        private const val ENABLE_UTTERANCE_STATE_MACHINE = true
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 220
-        private const val UTTERANCE_PRE_ROLL_MS = 900
-        private const val UTTERANCE_MIN_SPEECH_MS = 220
-        private const val UTTERANCE_SILENCE_MS = 1_100
-        private const val FAST_POST_PLAYBACK_SILENCE_MS = 600
+        private const val UTTERANCE_PRE_ROLL_MS = 1_200
+        private const val UTTERANCE_MIN_SPEECH_MS = 140
+        private const val UTTERANCE_SILENCE_MS = 520
+        private const val FAST_POST_PLAYBACK_SILENCE_MS = 320
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 6_000L
         private const val UTTERANCE_MAX_TURN_MS = 16_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
         private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 3_600
         private const val UTTERANCE_VAD_RMS = 80.0
-        private const val ENABLE_UTTERANCE_CONTINUATION = true
+        private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
+        private const val UTTERANCE_VAD_RMS_FALLBACK = 120.0
+        private const val WEBRTC_VAD_FRAME_SAMPLES = 320
+        private const val WEBRTC_VAD_SPEECH_MS = 60
+        private const val WEBRTC_VAD_SILENCE_MS = 280
+        private const val WEBRTC_VAD_MIN_SPEECH_FRAME_RATIO = 0.35
+        private const val ENABLE_UTTERANCE_CONTINUATION = false
         private const val UTTERANCE_CONTINUATION_CAPTURE_MS = 700
         private const val MAX_UTTERANCE_CONTINUATION_WINDOWS = 3
         private const val UTTERANCE_END_BOUNDARY_WINDOWS = 1
@@ -3741,12 +3816,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_SPARK_STREAM_LIVE_PLAYBACK = false
         private const val SPARK_TURN_STREAM_READ_TIMEOUT_MS = 90_000
         private val LOW_QUALITY_TRANSCRIPT_PATTERNS = listOf(
-            Regex("^(no\\s+){4,}no$"),
-            Regex("^([.\\-]\\s*){6,}$"),
-            Regex("^(thanks\\s+for\\s+watching|thank\\s+you\\s+very\\s+much|have\\s+a\\s+great\\s+day|have\\s+a\\s+nice\\s+day)$"),
-            Regex("^(take\\s+care(\\s+and)?\\s+(bye|bye\\s*bye|goodbye)[.!]?)$"),
-            Regex("^(see\\s+you\\s+next\\s+week[.!]?)$"),
-            Regex("^(you\\s+know[.!?]?)$"),
+            Regex("^(no\\s+){6,}no$"),
+            Regex("^([.\\-]\\s*){8,}$"),
+            Regex("^(z\\s*){6,}$"),
         )
         private val SOURCE_ROTATE_IMMEDIATELY_REASONS = setOf(
             "speaker_mismatch",
