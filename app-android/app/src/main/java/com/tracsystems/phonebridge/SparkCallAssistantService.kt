@@ -533,6 +533,20 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 transcriptPreview = assembledUtterance.transcript
                 transcriptAudioWav = assembledUtterance.audioWav
                 transcriptChunkCount = assembledUtterance.chunkCount
+                val sincePlaybackMs = System.currentTimeMillis() - lastPlaybackEndedAtMs.get()
+                if (
+                    sincePlaybackMs in 0..POST_PLAYBACK_ECHO_GUARD_WINDOW_MS &&
+                    shouldRejectPostPlaybackEcho(transcriptPreview, lastAssistantReplyText)
+                ) {
+                    CommandAuditLog.add("voice_bridge:post_playback_echo_guard:${sincePlaybackMs}ms")
+                    Log.w(
+                        TAG,
+                        "post-playback echo guard rejected transcript=${transcriptPreview.take(120)} ageMs=$sincePlaybackMs",
+                    )
+                    speaking.set(false)
+                    startCaptureLoop(ECHO_RETRY_DELAY_MS)
+                    return@execute
+                }
                 if (lastAssistantReplyText.isNotBlank() && transcriptPreview.isNotBlank()) {
                     val overlap = tokenOverlapRatio(transcriptPreview, lastAssistantReplyText)
                     if (overlap >= TURN_ECHO_REJECT_OVERLAP_THRESHOLD) {
@@ -545,6 +559,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         startCaptureLoop(ECHO_RETRY_DELAY_MS)
                         return@execute
                     }
+                }
+                if (
+                    transcriptPreview.isNotBlank() &&
+                    transcriptPreviewCoreTokenCount(transcriptPreview) <= SHORT_TURN_MAX_TOKENS &&
+                    !hasShortTurnConsensus(transcriptPreview, transcriptAudioWav)
+                ) {
+                    CommandAuditLog.add("voice_bridge:short_turn_consensus_reject")
+                    Log.w(TAG, "short-turn consensus rejected transcript=${transcriptPreview.take(96)}")
+                    speaking.set(false)
+                    startCaptureLoop(TRANSCRIPT_RETRY_DELAY_MS)
+                    return@execute
                 }
                 val skipAsrForTurn = transcriptPreview.isNotBlank()
                 if (!skipAsrForTurn) {
@@ -2389,6 +2414,56 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             .trim()
     }
 
+    private fun transcriptPreviewCoreTokenCount(transcript: String): Int {
+        return transcript
+            .lowercase(Locale.US)
+            .replace(Regex("[^a-z0-9\\s']"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .split(" ")
+            .filter { it.isNotBlank() }
+            .size
+    }
+
+    private fun shouldRejectPostPlaybackEcho(transcript: String, lastReply: String): Boolean {
+        if (transcript.isBlank() || lastReply.isBlank()) {
+            return false
+        }
+        val tokenCount = transcriptPreviewCoreTokenCount(transcript)
+        if (tokenCount <= 0 || tokenCount > POST_PLAYBACK_ECHO_GUARD_MAX_TOKENS) {
+            return false
+        }
+        val overlap = tokenOverlapRatio(transcript, lastReply)
+        return overlap >= POST_PLAYBACK_ECHO_REJECT_OVERLAP_THRESHOLD
+    }
+
+    private fun hasShortTurnConsensus(primaryTranscript: String, wavBytes: ByteArray?): Boolean {
+        val audio = wavBytes ?: return true
+        val primary = normalizeTranscriptForCall(primaryTranscript).trim()
+        if (primary.isBlank()) {
+            return false
+        }
+        val tokenCount = transcriptPreviewCoreTokenCount(primary)
+        if (tokenCount <= 0 || tokenCount > SHORT_TURN_MAX_TOKENS) {
+            return true
+        }
+        val secondary = runCatching { callSparkAsr(audio) }
+            .onFailure { error ->
+                Log.e(TAG, "short-turn second ASR failed", error)
+                CommandAuditLog.add("voice_bridge:short_turn_asr_error:${error.message}")
+            }
+            .getOrNull()
+            ?.let { normalizeTranscriptForCall(it) }
+            ?.trim()
+            .orEmpty()
+        if (secondary.isBlank()) {
+            return false
+        }
+        val overlap = tokenOverlapRatio(primary, secondary)
+        CommandAuditLog.add("voice_bridge:short_turn_consensus:${"%.2f".format(overlap)}")
+        return overlap >= SHORT_TURN_CONSENSUS_OVERLAP_THRESHOLD
+    }
+
     private fun scoreAdaptiveTranscript(transcript: String): Int {
         val normalized = transcript
             .lowercase(Locale.US)
@@ -3746,7 +3821,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
         private const val NO_AUDIO_RETRY_DELAY_MS = 450L
         private const val BARGE_IN_RESUME_DELAY_MS = 40L
-        private const val NO_AUDIO_UNPIN_THRESHOLD = 6
+        private const val NO_AUDIO_UNPIN_THRESHOLD = 20
         private const val ENFORCE_CALL_MUTE = true
         private const val ENABLE_FOREGROUND_NOTIFICATION = false
         private const val SEND_GREETING_ON_CONNECT = true
@@ -3793,7 +3868,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
         private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 320L
         private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 2
-        private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 10
+        private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 20
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
         private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.20
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
@@ -3855,8 +3930,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val FAST_POST_PLAYBACK_SILENCE_MS = 220
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 3_000L
         private const val FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD = 2
-        private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 3
-        private const val UTTERANCE_MAX_TURN_MS = 16_000
+        private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 20
+        private const val UTTERANCE_MAX_TURN_MS = 8_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
         private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 700
         private const val UTTERANCE_VAD_RMS = 80.0
@@ -3887,6 +3962,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val SPARK_TURN_STREAM_READ_TIMEOUT_MS = 90_000
         private const val TURN_ECHO_REJECT_OVERLAP_THRESHOLD = 0.70
         private const val ECHO_RETRY_DELAY_MS = 120L
+        private const val POST_PLAYBACK_ECHO_GUARD_WINDOW_MS = 1_200L
+        private const val POST_PLAYBACK_ECHO_GUARD_MAX_TOKENS = 4
+        private const val POST_PLAYBACK_ECHO_REJECT_OVERLAP_THRESHOLD = 0.35
+        private const val SHORT_TURN_MAX_TOKENS = 3
+        private const val SHORT_TURN_CONSENSUS_OVERLAP_THRESHOLD = 0.55
         private const val MAX_REPLY_SENTENCES = 3
         private const val MAX_REPLY_CHARS = 320
         private const val REPLY_SENTENCE_DEDUP_OVERLAP_THRESHOLD = 0.85

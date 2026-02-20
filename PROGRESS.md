@@ -3181,3 +3181,27 @@ _Last updated: 2026-02-19_
 ### Expected effect
 - Preserve dead-zone improvements from fast stream rebind.
 - Keep capture source stable across turns, reducing pitch artifacts and reply drift.
+
+## 2026-02-20 17:08 — Drift hardening (echo guard + short-turn consensus + turn cap)
+
+### What
+- Hardened post-playback echo handling:
+  - Added `POST_PLAYBACK_ECHO_GUARD_WINDOW_MS = 1200` with short-turn overlap gate before sending to LLM.
+- Added short-turn ASR consensus:
+  - For `<=3` token user turns, run a second ASR pass on same WAV and require overlap (`>=0.55`) before forwarding.
+  - Reject ambiguous short turns and immediately re-capture.
+- Reduced oversized turn risk:
+  - `UTTERANCE_MAX_TURN_MS: 16000 -> 8000`
+- Enforced source stability for full-call behavior:
+  - `NO_AUDIO_UNPIN_THRESHOLD: 6 -> 20`
+  - `FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD: 3 -> 20`
+  - `ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD: 10 -> 20`
+
+### Why
+- Latest artifacts had correct 48k WAV headers but semantic drift from ASR contamination and short noisy turns.
+- Source thrash was solved, but ambiguous short turns and long noisy captures still derailed conversation context.
+
+### Expected effect
+- Fewer echo-induced false turns right after AI playback.
+- Better reliability for one- to three-word user replies.
+- Lower chance of long mixed/noisy utterances poisoning context.
