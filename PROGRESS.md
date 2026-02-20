@@ -2336,3 +2336,25 @@ _Last updated: 2026-02-19_
 
 ### Deploy
 - Rebuilt + reinstalled debug APK successfully.
+
+## 2026-02-20 07:49 — Replaced chunk-guessing with VAD utterance state machine
+
+### Why
+- User reported hard clipping and fragmented turns (`...ood movie`), and asked for proper utterance endpointing rather than constant tweaking.
+- Existing continuation mode still depended on fixed per-capture windows and early boundary closure.
+
+### What changed
+- Added a dedicated VAD utterance state machine in `SparkCallAssistantService`:
+  - pre-roll buffer (`350ms`) before speech start,
+  - speech start on RMS threshold (`UTTERANCE_VAD_RMS = 120`),
+  - silence hangover endpoint (`560ms`) after speech,
+  - minimum speech duration (`260ms`),
+  - max turn duration (`8s`) and loop timeout (`11s`).
+- State machine now captures one full utterance first, then runs ASR once on the merged utterance WAV.
+- Disabled old continuation path while state machine is active:
+  - `ENABLE_UTTERANCE_STATE_MACHINE = true`
+  - `ENABLE_UTTERANCE_CONTINUATION = false`
+- Added merged-turn debug dump (`rxm-*`) for direct verification of what ASR receives.
+
+### Deploy
+- Rebuilt and reinstalled debug APK successfully.
