@@ -2851,3 +2851,25 @@ _Last updated: 2026-02-19_
 - Rebuilt debug APK successfully.
 - Reinstalled and relaunched on Pixel.
 - Default dialer role remains `com.tracsystems.phonebridge`.
+
+## 2026-02-20 13:43 — Fix second-turn stall from undersized root stream chunks
+
+### Observed in `latest-call-20260220-134021`
+- First turn worked with correct transcript and reply.
+- Second turn entered capture (`requestReplyFromAudioFallback run`) but produced no `rx/rxa/tx` artifacts before hangup.
+
+### Root cause hypothesis (log-consistent)
+- Stream capture path accepted very small PCM fragments as valid chunks.
+- Tiny voiced/noise fragments can keep state-machine in-progress without reaching silence/finalization quickly.
+- This can stall turn completion after first reply.
+
+### Fix
+- Added minimum fill threshold for stream chunks in `readRootCaptureStreamChunk(...)`:
+  - required bytes = `max(MIN_ROOT_STREAM_CHUNK_BYTES, targetRawBytes * 0.30)`.
+- Chunks below threshold are now treated as empty and logged:
+  - `voice_bridge:root_stream_chunk_short:<got>/<target>`.
+- This forces no-speech timeout/fallback behavior instead of hanging on micro-fragments.
+
+### Expected effect
+- Prevents long second-turn dead zones when root stream delivers sparse audio data.
+- Should trigger prompt fallback or timeout path instead of silent stall.

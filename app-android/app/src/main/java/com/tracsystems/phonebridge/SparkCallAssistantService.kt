@@ -3115,9 +3115,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val bytesPerSample = (session.bitsPerSample / 8).coerceAtLeast(2)
         val targetRawBytes = (((session.rawSampleRate * durationMs) / 1000) * session.channels * bytesPerSample)
             .coerceAtLeast(MIN_ROOT_STREAM_CHUNK_BYTES)
+        val minChunkBytes = max(
+            MIN_ROOT_STREAM_CHUNK_BYTES,
+            (targetRawBytes.toDouble() * ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO).roundToInt(),
+        )
         val rawBytes = readRootCaptureStreamBytes(session, targetRawBytes, ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS)
             ?: return null
-        if (rawBytes.size < bytesPerSample) {
+        if (rawBytes.size < max(bytesPerSample, minChunkBytes)) {
+            CommandAuditLog.add("voice_bridge:root_stream_chunk_short:${rawBytes.size}/$targetRawBytes")
             return null
         }
         val pcm16 = if (bytesPerSample == 2) {
@@ -3629,6 +3634,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 1_100L
         private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 3
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
+        private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.30
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 900
         private const val ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS = 320
