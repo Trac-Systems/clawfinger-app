@@ -1290,6 +1290,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val raw = runCatching { rawFile.readBytes() }.getOrNull()
         runCatching { rawFile.delete() }
         if (raw == null || raw.size < MIN_ROOT_RAW_CAPTURE_BYTES) {
+            Log.w(
+                TAG,
+                "root tinycap precise empty device=$device bytes=${raw?.size ?: 0} stdout=${result.stdout.take(80)} stderr=${result.stderr.take(80)}",
+            )
             return null
         }
         val monoPcm = interleavedPcm16ToMono(raw, channels)
@@ -1353,6 +1357,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         val wav = runCatching { wavFile.readBytes() }.getOrNull()
         runCatching { wavFile.delete() }
+        if (wav == null || wav.size <= 44) {
+            Log.w(
+                TAG,
+                "root tinycap legacy empty device=$device bytes=${wav?.size ?: 0} stdout=${result.stdout.take(80)} stderr=${result.stderr.take(80)}",
+            )
+            return null
+        }
         persistDebugWav(
             prefix = "rxraw",
             wavBytes = if (DEBUG_DUMP_ROOT_RAW_CAPTURE && (wav?.size ?: 0) >= MIN_DEBUG_RAW_WAV_BYTES) wav else null,
@@ -3451,7 +3462,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_MIN_ACCEPT_VOICED_MS = 180
         private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 24_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
-        private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
+        private const val ROOT_CAPTURE_PRECISE_CHUNKS = true
         private const val ROOT_CAPTURE_PRECISE_PADDING_MS = 220
         private const val ROOT_CAPTURE_PRECISE_MAX_MS = 2_400
         private const val ROOT_CAPTURE_PRECISE_EXTRA_SECONDS = 1
