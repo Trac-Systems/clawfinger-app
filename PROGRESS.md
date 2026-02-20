@@ -3264,3 +3264,18 @@ _Last updated: 2026-02-19_
   - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - Deployed updated debug app to Pixel:
   - `cd app-android && ./gradlew :app:installDebug` passed (`59191FDCH000YV`).
+
+## 2026-02-20 20:10 — First-turn reliability hotfix (no greeting barge-in + strict stream kept)
+
+### What
+- Kept strict stream mode active in startup phase (removed startup fallback to fixed probe capture path).
+- Disabled barge-in interrupt for greeting playback only; barge-in remains enabled for normal turn replies.
+- Left startup aggressive no-audio recovery thresholds in place.
+
+### Why
+- Latest call logs showed startup occasionally falling into fixed probe captures (`voice_downlink` + short_voice retries), adding delay and inconsistency before first usable turn.
+- Greeting-time barge-in could preempt greeting and race into capture before call audio path was fully stable.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.

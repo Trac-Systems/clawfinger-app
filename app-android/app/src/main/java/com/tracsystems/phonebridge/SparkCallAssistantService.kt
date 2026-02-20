@@ -296,6 +296,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 playReplyViaRootPcm(
                     audioWavBase64 = response?.audioWavBase64,
                     replyTextForEcho = reply,
+                    enableBargeInInterrupt = false,
                 )
             } else {
                 RootPlaybackResult(played = false, interrupted = false)
@@ -347,7 +348,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 var transcriptChunkCount = 0
                 var lastRejectionReason: String? = null
                 var sameSourceRetries = 0
-                val strictStreamOnly = isStrictStreamOnlyActive()
+                val strictStreamOnly = ENABLE_STRICT_STREAM_ONLY
                 val useStateMachine = ENABLE_UTTERANCE_STATE_MACHINE
                 if (useStateMachine) {
                     val utterance = captureUtteranceStateMachine()
@@ -691,10 +692,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Log.i(TAG, "capture loop tick")
             requestReplyFromAudioFallback()
         }, delayMs)
-    }
-
-    private fun isStrictStreamOnlyActive(): Boolean {
-        return ENABLE_STRICT_STREAM_ONLY && !startupRecoveryActive
     }
 
     private fun noAudioUnpinThreshold(): Int {
@@ -1757,6 +1754,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun playReplyViaRootPcm(
         audioWavBase64: String?,
         replyTextForEcho: String? = null,
+        enableBargeInInterrupt: Boolean = ENABLE_BARGE_IN_INTERRUPT,
     ): RootPlaybackResult {
         if (audioWavBase64.isNullOrBlank()) {
             return RootPlaybackResult(played = false, interrupted = false)
@@ -1803,6 +1801,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     timeoutMs = playbackTimeoutMs,
                     expectedDurationMs = playbackDurationMs,
                     replyTextForEcho = replyTextForEcho,
+                    enableBargeInInterrupt = enableBargeInInterrupt,
                 )
                 if (playbackResult.played || playbackResult.interrupted) {
                     return playbackResult
@@ -1854,6 +1853,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         timeoutMs: Long,
         expectedDurationMs: Long,
         replyTextForEcho: String?,
+        enableBargeInInterrupt: Boolean,
     ): RootPlaybackResult {
         val startedAt = System.currentTimeMillis()
         val deadline = startedAt + timeoutMs
@@ -1879,7 +1879,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 markSpeechActivity("root_playback_forced:$device")
                 return RootPlaybackResult(played = true, interrupted = false)
             }
-            if (ENABLE_BARGE_IN_INTERRUPT) {
+            if (enableBargeInInterrupt) {
                 val now = System.currentTimeMillis()
                 if (now >= nextProbeAt) {
                     nextProbeAt = now + BARGE_IN_PROBE_INTERVAL_MS
@@ -3106,6 +3106,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     timeoutMs = timeoutMs,
                     expectedDurationMs = durationMs,
                     replyTextForEcho = parsedReply.ifBlank { null },
+                    enableBargeInInterrupt = ENABLE_BARGE_IN_INTERRUPT,
                 )
             } else {
                 stopRootPlaybackProcess(liveSession!!.pid)
