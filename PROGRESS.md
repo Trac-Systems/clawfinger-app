@@ -2987,3 +2987,26 @@ _Last updated: 2026-02-19_
 ### Next
 1. Run fresh live call and verify logs contain no in-call fallback probe branch.
 2. Pull only current-call WAV/transcripts and tune VAD thresholds from that run.
+
+## 2026-02-20 15:08 — Fix low-pitch RXM by correcting stream raw/effective sample-rate handling
+
+### What
+- Fixed root tinycap stream session to preserve `rawSampleRate` as the requested stream rate and only apply correction to `effectiveSampleRate` (ASR/processing rate).
+- Removed incorrect `processingSampleRate` override that forced raw stream to corrected rate.
+- Set deterministic stream request rate to 48 kHz:
+  - `ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 48000`
+  - `ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = [48000]`
+  - `ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = [48000]`
+
+### Why
+- Latest pulled call artifacts showed RXM WAVs sounding low-pitched/slow and ASR collapsing to long `mmmm...` segments.
+- Root cause in stream path: raw PCM was being interpreted at corrected rate instead of true stream rate, causing timing/pitch distortion before ASR.
+
+### Result
+- Stream path now models conversion correctly: capture raw at 48 kHz, then resample to corrected effective rate for endpointing/ASR.
+- This aligns stream behavior with researched best practice for telephony capture where device stream rate differs from processing rate.
+
+### Next
+1. Rebuild/reinstall APK.
+2. Run live call and pull only latest artifacts.
+3. Confirm RXM pitch normal and second-turn ASR no longer degenerates into `mmmm...`.
