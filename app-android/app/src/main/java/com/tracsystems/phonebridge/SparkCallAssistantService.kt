@@ -55,9 +55,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var adaptiveCaptureSampleRate: Int? = null
     private var adaptiveCaptureRateLocked: Boolean = false
     private var adaptiveCaptureRateNoInfoStreak: Int = 0
+    private var adaptiveCaptureRateLowScoreStreak: Int = 0
     private var rootCaptureStreamSession: RootCaptureStreamSession? = null
     private var consecutiveNoAudioRejects: Int = 0
     private var enrolledSpeaker: SpeakerFingerprint? = null
+    private val rootRollingPrebufferLock = Any()
+    private var rootRollingPrebufferPcm: ByteArray = ByteArray(0)
+    private var rootRollingPrebufferSampleRate: Int = 0
     @Volatile
     private var lastAssistantReplyText: String = ""
     private var currentVoiceCallVolume: Int = -1
@@ -145,6 +149,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             adaptiveCaptureSampleRate = null
             adaptiveCaptureRateLocked = false
             adaptiveCaptureRateNoInfoStreak = 0
+            adaptiveCaptureRateLowScoreStreak = 0
             stopRootCaptureStreamSession("service_start_reset")
             consecutiveNoAudioRejects = 0
             enrolledSpeaker = null
@@ -182,6 +187,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             InCallStateHolder.setCallMuted(false)
         }
         stopRootCaptureStreamSession("service_destroy")
+        clearRootRollingPrebuffer()
         restoreRootCallRouteProfile()
         networkExecutor.shutdownNow()
         CommandAuditLog.add("voice_bridge:stop")
@@ -629,11 +635,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (!speakingNow) {
                 preRoll = appendAndTrimBytes(preRoll, pcm, thresholds.preRollMaxBytes)
                 if (!voiced) {
+                    appendRootRollingPrebuffer(captured)
                     continue
                 }
                 speakingNow = true
                 current.reset()
-                if (preRoll.isNotEmpty()) {
+                val rollingPrebuffer = consumeRootRollingPrebuffer(sampleRate)
+                if (rollingPrebuffer.isNotEmpty()) {
+                    current.write(rollingPrebuffer)
+                } else if (preRoll.isNotEmpty()) {
                     current.write(preRoll)
                     appendChunk = false
                 }
@@ -649,6 +659,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (appendChunk) {
                 current.write(pcm)
             }
+            appendRootRollingPrebuffer(captured)
             chunkCount += 1
             val totalSamples = current.size() / 2
             val shouldFlush = totalSamples >= thresholds.maxTurnSamples || (
@@ -672,6 +683,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val adaptiveAsr = transcribeUtteranceAdaptive(cappedPcm, sampleRate)
         val utteranceWav = adaptiveAsr?.wav ?: pcm16ToWav(cappedPcm, sampleRate)
         val transcript = adaptiveAsr?.transcript.orEmpty()
+        clearRootRollingPrebuffer()
         if (ENABLE_DEBUG_WAV_DUMP) {
             persistDebugWav(
                 prefix = "rxm",
@@ -2254,6 +2266,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val selected = best ?: return null
         if (selected.score <= 0) {
             adaptiveCaptureRateNoInfoStreak += 1
+            adaptiveCaptureRateLowScoreStreak += 1
             CommandAuditLog.add("voice_bridge:adaptive_rate_noinfo:$adaptiveCaptureRateNoInfoStreak")
             if (ENABLE_ADAPTIVE_CAPTURE_RATE && adaptiveCaptureRateLocked && adaptiveCaptureRateNoInfoStreak >= ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK) {
                 adaptiveCaptureRateLocked = false
@@ -2266,6 +2279,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
 
         adaptiveCaptureRateNoInfoStreak = 0
+        if (selected.score < ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE) {
+            adaptiveCaptureRateLowScoreStreak += 1
+            CommandAuditLog.add("voice_bridge:adaptive_rate_lowscore:$adaptiveCaptureRateLowScoreStreak:score=${selected.score}:rate=${selected.sampleRate}")
+            if (ENABLE_ADAPTIVE_CAPTURE_RATE && adaptiveCaptureRateLocked && adaptiveCaptureRateLowScoreStreak >= ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK) {
+                adaptiveCaptureRateLocked = false
+                adaptiveCaptureSampleRate = null
+                selectedRootCaptureSampleRate = null
+                stopRootCaptureStreamSession("adaptive_rate_unlock:lowscore")
+                CommandAuditLog.add("voice_bridge:adaptive_rate_unlock:lowscore")
+            }
+        } else {
+            adaptiveCaptureRateLowScoreStreak = 0
+        }
         if (ENABLE_ADAPTIVE_CAPTURE_RATE && !adaptiveCaptureRateLocked && selected.score >= ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE) {
             adaptiveCaptureSampleRate = selected.sampleRate
             adaptiveCaptureRateLocked = true
@@ -3097,8 +3123,58 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runCatching { current.inputStream.close() }
         stopRootPlaybackProcess(current.pid)
         runCatching { current.fifoFile.delete() }
+        clearRootRollingPrebuffer()
         reason?.takeIf { it.isNotBlank() }?.let {
             CommandAuditLog.add("voice_bridge:root_stream_capture_stop:$it")
+        }
+    }
+
+    private fun appendRootRollingPrebuffer(frame: RootCaptureFrame) {
+        if (!ENABLE_ROOT_PCM_BRIDGE || frame.pcm.isEmpty() || frame.sampleRate <= 0) {
+            return
+        }
+        synchronized(rootRollingPrebufferLock) {
+            val maxBytes = ((frame.sampleRate * ROOT_ROLLING_PREBUFFER_MS) / 1000) * 2
+            if (maxBytes <= 0) {
+                return
+            }
+            if (rootRollingPrebufferSampleRate != frame.sampleRate) {
+                rootRollingPrebufferPcm = ByteArray(0)
+                rootRollingPrebufferSampleRate = frame.sampleRate
+            }
+            rootRollingPrebufferPcm = appendAndTrimBytes(
+                existing = rootRollingPrebufferPcm,
+                incoming = frame.pcm,
+                maxBytes = maxBytes,
+            )
+        }
+    }
+
+    private fun consumeRootRollingPrebuffer(targetSampleRate: Int): ByteArray {
+        synchronized(rootRollingPrebufferLock) {
+            if (rootRollingPrebufferPcm.isEmpty()) {
+                return ByteArray(0)
+            }
+            val pcm = rootRollingPrebufferPcm
+            val sourceRate = rootRollingPrebufferSampleRate
+            rootRollingPrebufferPcm = ByteArray(0)
+            rootRollingPrebufferSampleRate = 0
+            return if (sourceRate <= 0 || targetSampleRate <= 0 || sourceRate == targetSampleRate) {
+                pcm
+            } else {
+                resamplePcm16Mono(
+                    pcm = pcm,
+                    fromSampleRate = sourceRate,
+                    toSampleRate = targetSampleRate,
+                )
+            }
+        }
+    }
+
+    private fun clearRootRollingPrebuffer() {
+        synchronized(rootRollingPrebufferLock) {
+            rootRollingPrebufferPcm = ByteArray(0)
+            rootRollingPrebufferSampleRate = 0
         }
     }
 
@@ -3446,7 +3522,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_SPEAKER_SIMILARITY = 0.52
         private const val FRAME_MS = 20
         private const val CLARIFICATION_COOLDOWN_MS = 2_800L
-        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 140L
+        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 20L
         private const val LISTEN_SPEAKER_VOLUME_FRACTION = 0.45
         private const val TTS_SPEAKER_VOLUME_FRACTION = 0.80
         private const val PROBE_CAPTURE_MS = 480
@@ -3484,11 +3560,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
         private const val ROOT_CAPTURE_RATE_FIX_TO = 24_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
-        private const val ENABLE_ADAPTIVE_CAPTURE_RATE = false
+        private const val ENABLE_ADAPTIVE_CAPTURE_RATE = true
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE = 11
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
         private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(24_000, 32_000, 16_000)
+        private const val ROOT_ROLLING_PREBUFFER_MS = 1_000
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
         private const val KEEP_CALL_MUTED_DURING_TTS = true

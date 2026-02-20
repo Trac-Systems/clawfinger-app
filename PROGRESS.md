@@ -2682,3 +2682,24 @@ _Last updated: 2026-02-19_
 - Verify caller can complete full sentence before model turn starts.
 - Verify at least 5 consecutive turns without silent drop.
 - If residual drops remain, capture latest `rxm-*` + `tx-*` wave pairs and inspect per-turn endpoint timing.
+
+## 2026-02-20 09:51 — Adaptive capture-rate lock + rolling prebuffer restore
+
+### Requested fixes applied
+- Re-enabled adaptive per-call capture-rate calibration and lock:
+  - `ENABLE_ADAPTIVE_CAPTURE_RATE=true`
+  - adaptive scorer now locks best sample rate per call and keeps it pinned.
+- Added adaptive **auto-unlock/retry** when quality drops:
+  - no-info streak and low-score streak both tracked,
+  - locked rate is released after repeated low-quality ASR turns,
+  - capture stream session is restarted on unlock to retune rate.
+- Added rolling root-stream prebuffer (~1s) and prepend-on-turn-start:
+  - keep latest capture PCM in a rolling buffer while listening,
+  - prepend that buffer at speech start to reduce clipped first syllables,
+  - clear buffer on utterance finalize and stream stop.
+- Reduced post-playback arm delay:
+  - `POST_PLAYBACK_CAPTURE_DELAY_MS: 140 -> 20` for near-immediate listening.
+
+### Build/deploy
+- Rebuilt and reinstalled debug APK successfully.
+- Default dialer role remains `com.tracsystems.phonebridge`.
