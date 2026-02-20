@@ -2242,3 +2242,36 @@ _Last updated: 2026-02-19_
 ### Deploy
 - Rebuilt debug APK successfully.
 - Reinstalled on device via `scripts/android-install-debug.sh`.
+
+## 2026-02-20 07:35 — Pulled latest bad-call WAVs + ASR/transcript comparison
+
+### Trigger
+- User reported latest call did not answer actual questions.
+
+### Artifacts pulled
+- Local forensic bundle created in:
+  - `debug-wavs/last-call-2026-02-20-0633/`
+- Includes:
+  - `rx-1771565548881-a1-incall_cap_0.wav`
+  - `rx-1771565560635-a3-incall_cap_1.wav`
+  - `rx-1771565573434-a3-incall_cap_0.wav`
+  - `rx-1771565592796-a3-incall_cap_1.wav`
+  - `tx-1771565551078-no-who-s-there.wav`
+  - `tx-1771565563244-a-good-movie..wav`
+  - `tx-1771565575048-good..wav`
+  - `tx-1771565594929-it-s-meant-to-be-a-good-movie..wav`
+  - `transcriptions.txt`
+  - `call-log.txt` + `log-snippet.txt`
+
+### ASR result snapshot
+- RX side transcribed as:
+  - `No, who's there?`
+  - `A good movie.`
+  - `Good.`
+  - `It's meant to be a good movie.`
+- TX side confirms model replied to those short/partial turns, not richer user questions.
+
+### Observed behavior from logs
+- Turn progression reached active and generated 4 reply turns.
+- Between turns, repeated `no_audio_source` occurred before successful attempt-3 captures.
+- Utterance continuation window usually ended immediately with boundary (`no_audio_source`), so no multi-chunk merge happened in this call.
