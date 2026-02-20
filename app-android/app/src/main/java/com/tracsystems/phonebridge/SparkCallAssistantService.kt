@@ -709,9 +709,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (reason.isNullOrBlank()) {
             return false
         }
-        if (reason == "no_audio_source") {
-            return true
-        }
         if (retriesSoFar >= MAX_SAME_SOURCE_RETRIES) {
             return false
         }
@@ -1247,7 +1244,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val startedAt = System.currentTimeMillis()
         val deadline = startedAt + timeoutMs
         var nextProbeAt = startedAt + BARGE_IN_ARM_DELAY_MS
-        var probeCount = 0
         while (System.currentTimeMillis() < deadline) {
             if (!InCallStateHolder.hasLiveCall()) {
                 stopRootPlaybackProcess(pid)
@@ -1260,9 +1256,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             if (ENABLE_BARGE_IN_INTERRUPT) {
                 val now = System.currentTimeMillis()
-                if (probeCount < BARGE_IN_MAX_PROBES_PER_REPLY && now >= nextProbeAt) {
+                if (now >= nextProbeAt) {
                     nextProbeAt = now + BARGE_IN_PROBE_INTERVAL_MS
-                    probeCount += 1
                     if (detectBargeInSpeech(replyTextForEcho)) {
                         stopRootPlaybackProcess(pid)
                         CommandAuditLog.add("voice_bridge:barge_in")
@@ -2749,17 +2744,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
         private const val ROOT_ROUTE_RECOVER_THROTTLE_MS = 1_800L
         private const val ROOT_PLAYBACK_SAMPLE_RATE = 48_000
-        private const val ENABLE_BARGE_IN_INTERRUPT = true
-        private const val BARGE_IN_ARM_DELAY_MS = 320L
+        private const val ENABLE_BARGE_IN_INTERRUPT = false
+        private const val BARGE_IN_ARM_DELAY_MS = 180L
         private const val BARGE_IN_PROBE_INTERVAL_MS = 480L
         private const val BARGE_IN_PLAYBACK_POLL_MS = 60L
-        private const val BARGE_IN_PROBE_CAPTURE_MS = 180
-        private const val BARGE_IN_MIN_RMS = 26.0
-        private const val BARGE_IN_MIN_VOICED_MS = 110
+        private const val BARGE_IN_PROBE_CAPTURE_MS = 220
+        private const val BARGE_IN_MIN_RMS = 24.0
+        private const val BARGE_IN_MIN_VOICED_MS = 90
         private const val BARGE_IN_STRONG_RMS = 32.0
         private const val BARGE_IN_STRONG_VOICED_MS = 140
         private const val BARGE_IN_REQUIRE_ASR = true
-        private const val BARGE_IN_MAX_PROBES_PER_REPLY = 1
         private const val BARGE_IN_MIN_ALNUM_CHARS = 2
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3

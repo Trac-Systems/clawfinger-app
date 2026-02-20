@@ -2180,3 +2180,15 @@ _Last updated: 2026-02-19_
 
 ### Intent
 - Keep interruption available while minimizing capture-path contention/regression after assistant playback.
+
+## 2026-02-20 06:55 — Reverted to pre-barge locked baseline (barge-in off)
+
+### Why
+- User requested full rollback to the known stable state before barge-in was re-enabled.
+- Latest barge-in-enabled runs still stalled after early turns.
+
+### Change
+- Restored `SparkCallAssistantService.kt` to commit `9c817ca` baseline:
+  - `ENABLE_BARGE_IN_INTERRUPT = false`
+  - removed later barge-in mitigation edits introduced after re-enable.
+- This returns runtime behavior to the previously locked non-barge profile.
