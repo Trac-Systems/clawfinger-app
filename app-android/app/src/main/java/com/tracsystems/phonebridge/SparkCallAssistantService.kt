@@ -710,6 +710,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (captured == null || captured.pcm.size < 2) {
                 consecutiveNoAudioRejects += 1
                 maybeRecoverRootRoute()
+                if (!speakingNow && fastEndpointMode && consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD) {
+                    stopRootCaptureStreamSession("fast_post_playback_rebind_$consecutiveNoAudioRejects")
+                    if (consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD) {
+                        resetRootCapturePin("fast_post_playback_no_audio_$consecutiveNoAudioRejects")
+                        rotateRootCaptureSource()
+                    }
+                }
                 if (consecutiveNoAudioRejects >= ROOT_CAPTURE_STREAM_RESTART_THRESHOLD) {
                     stopRootCaptureStreamSession("stream_timeout_$consecutiveNoAudioRejects")
                 }
@@ -3738,7 +3745,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
         private const val NO_AUDIO_RETRY_DELAY_MS = 450L
         private const val BARGE_IN_RESUME_DELAY_MS = 40L
-        private const val NO_AUDIO_UNPIN_THRESHOLD = 6
+        private const val NO_AUDIO_UNPIN_THRESHOLD = 2
         private const val ENFORCE_CALL_MUTE = true
         private const val ENABLE_FOREGROUND_NOTIFICATION = false
         private const val SEND_GREETING_ON_CONNECT = true
@@ -3783,10 +3790,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_DURATION_SEC = 900
         private const val ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE = 16
         private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
-        private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 1_100L
-        private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 3
+        private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 320L
+        private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 2
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
-        private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.30
+        private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.20
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_MS = 1_400
         private const val ROOT_CAPTURE_TRAILING_VOICE_WINDOW_MS = 320
@@ -3844,10 +3851,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_MIN_SPEECH_MS = 100
         private const val UTTERANCE_SILENCE_MS = 520
         private const val FAST_POST_PLAYBACK_SILENCE_MS = 220
-        private const val FAST_POST_PLAYBACK_WINDOW_MS = 6_000L
+        private const val FAST_POST_PLAYBACK_WINDOW_MS = 3_000L
+        private const val FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD = 2
+        private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 3
         private const val UTTERANCE_MAX_TURN_MS = 16_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
-        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 900
+        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 700
         private const val UTTERANCE_VAD_RMS = 80.0
         private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
         private const val UTTERANCE_VAD_RMS_FALLBACK = 120.0

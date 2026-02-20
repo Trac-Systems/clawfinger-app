@@ -3141,3 +3141,25 @@ _Last updated: 2026-02-19_
 1. Rebuild/install APK.
 2. Run new call to `+4915129135779`.
 3. Pull latest-only artifacts and validate reduced dead-zones + no clipped first chunk.
+
+## 2026-02-20 16:55 — Post-playback dead-zone recovery hardening
+
+### What
+- Tuned strict stream-mode recovery to avoid repeated ~1s empty cycles after reply playback:
+  - `ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS: 1100 -> 320`
+  - `ROOT_CAPTURE_STREAM_RESTART_THRESHOLD: 3 -> 2`
+  - `ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO: 0.30 -> 0.20`
+  - `NO_AUDIO_UNPIN_THRESHOLD: 6 -> 2`
+  - `UTTERANCE_NO_SPEECH_TIMEOUT_MS: 900 -> 700`
+  - `FAST_POST_PLAYBACK_WINDOW_MS: 6000 -> 3000`
+- Added fast post-playback rebind/unpin path on repeated empty chunks:
+  - `FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD = 2`
+  - `FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 3`
+
+### Why
+- Logs showed immediate capture-loop restarts after TTS, but repeated `state-machine utterance empty` loops for several seconds.
+- Root cause was strict stream-only mode waiting on long stream-read timeouts and delayed source recovery.
+
+### Expected effect
+- Earlier stream rebind and source unpin directly after playback.
+- Reduced dead-zone before first user speech is accepted.
