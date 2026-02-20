@@ -2384,19 +2384,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun transcribeUtteranceAdaptive(pcm: ByteArray, fallbackRate: Int): AdaptiveAsrResult? {
-        val candidates = buildList {
-            val locked = adaptiveCaptureSampleRate
-            if (ENABLE_ADAPTIVE_CAPTURE_RATE && locked != null) {
-                add(locked)
-                if (locked != fallbackRate) {
+        val candidates = if (ENABLE_ADAPTIVE_CAPTURE_RATE) {
+            buildList {
+                val locked = adaptiveCaptureSampleRate
+                if (locked != null) {
+                    add(locked)
+                    if (locked != fallbackRate) {
+                        add(fallbackRate)
+                    }
+                } else {
                     add(fallbackRate)
-                }
-            } else {
-                add(ROOT_CAPTURE_REQUEST_SAMPLE_RATE)
-                if (fallbackRate != ROOT_CAPTURE_REQUEST_SAMPLE_RATE) {
-                    add(fallbackRate)
-                }
-                if (ENABLE_ADAPTIVE_CAPTURE_RATE && !adaptiveCaptureRateLocked) {
                     ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES.forEach { rate ->
                         if (!contains(rate)) {
                             add(rate)
@@ -2404,6 +2401,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
             }
+        } else {
+            listOf(fallbackRate)
         }
 
         var best: AdaptiveAsrResult? = null
@@ -3103,7 +3102,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             channels = preferredChannels,
         ) ?: return null
         rootCaptureStreamSession = started
-        selectedRootCaptureSampleRate = started.effectiveSampleRate
+        selectedRootCaptureSampleRate = started.rawSampleRate
         selectedRootCaptureChannels = 1
         CommandAuditLog.add("voice_bridge:root_stream_capture:${source.name}")
         return started
@@ -3717,7 +3716,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_MIN_ACCEPT_VOICED_MS = 90
         private const val ROOT_MIN_ACCEPT_DYNAMIC_RANGE = 35.0
         private const val ROOT_MIN_ACCEPT_CONFIDENCE = 0.62
-        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 48_000
+        private const val ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 16_000
         private const val ROOT_CAPTURE_PRIMARY_CHANNELS = 2
         private const val ROOT_CAPTURE_PRECISE_CHUNKS = false
         private const val ROOT_CAPTURE_PRECISE_PADDING_MS = 220
@@ -3737,7 +3736,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 70
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
-        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(48_000)
+        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(16_000)
         private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
         private const val ROOT_CAPTURE_RATE_FIX_ENABLED = true
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
@@ -3748,7 +3747,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE = 11
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
-        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(48_000)
+        private val ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = listOf(16_000)
         private const val ROOT_ROLLING_PREBUFFER_MS = 1_200
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192

@@ -3010,3 +3010,28 @@ _Last updated: 2026-02-19_
 1. Rebuild/reinstall APK.
 2. Run live call and pull only latest artifacts.
 3. Confirm RXM pitch normal and second-turn ASR no longer degenerates into `mmmm...`.
+
+## 2026-02-20 15:17 — Lock capture/ASR to fixed single-rate path (remove mixed-rate adaptive scoring)
+
+### What
+- Changed root stream persistence to keep requested raw rate across stream restarts:
+  - `selectedRootCaptureSampleRate = started.rawSampleRate`.
+- Disabled mixed-rate adaptive ASR candidate probing when adaptive mode is off:
+  - `transcribeUtteranceAdaptive()` now uses only `fallbackRate` unless `ENABLE_ADAPTIVE_CAPTURE_RATE=true`.
+- Restored deterministic fixed request/candidate rate to 16 kHz:
+  - `ROOT_CAPTURE_REQUEST_SAMPLE_RATE = 16000`
+  - `ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = [16000]`
+  - `ROOT_CAPTURE_ADAPTIVE_RATE_CANDIDATES = [16000]`
+
+### Why
+- Latest pulled call showed rate oscillation in RXM (`16000` and `48000` in one call) and low-pitch artifacts.
+- Root cause: mixed-rate scoring path was still active even with adaptive disabled, so the same PCM was reinterpreted at different rates and sometimes selected incorrectly.
+
+### Result
+- Turn ASR input is now single-rate deterministic per turn.
+- Eliminates rate-flip selection as a source of pitch drift and transcript instability.
+
+### Next
+1. Rebuild/install APK.
+2. Run fresh call and pull latest-only WAV + transcripts.
+3. Verify no 48k RXM outputs and no low-pitch turn artifacts.
