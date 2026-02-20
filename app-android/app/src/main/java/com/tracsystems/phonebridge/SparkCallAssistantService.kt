@@ -157,7 +157,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             enforceCallMute()
             markSpeechActivity("service_start")
             startSilenceWatchdog()
-            startCaptureLoop(40)
+            if (SEND_GREETING_ON_CONNECT) {
+                requestGreeting()
+            } else {
+                startCaptureLoop(40)
+            }
             Thread({
                 applyRootCallRouteProfile()
                 CommandAuditLog.add("root:route_set_async:done")
@@ -301,230 +305,237 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun requestReplyFromAudioFallback() {
+        Log.i(TAG, "requestReplyFromAudioFallback start")
         speaking.set(true)
-        networkExecutor.execute {
-            if (!InCallStateHolder.hasLiveCall()) {
-                speaking.set(false)
-                return@execute
-            }
-            var transcriptPreview = ""
-            var transcriptAudioWav: ByteArray? = null
-            var transcriptChunkCount = 0
-            var lastRejectionReason: String? = null
-            var sameSourceRetries = 0
-            if (ENABLE_UTTERANCE_STATE_MACHINE) {
-                val utterance = captureUtteranceStateMachine()
-                if (utterance == null) {
-                    lastRejectionReason = "utterance_empty"
-                } else {
-                    transcriptPreview = utterance.transcript
-                    transcriptAudioWav = utterance.audioWav
-                    transcriptChunkCount = utterance.chunkCount
-                }
-            } else {
-                repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
-                    if (transcriptPreview.isNotBlank()) {
-                        return@repeat
-                    }
-                    Log.i(TAG, "running audio fallback capture (attempt ${attempt + 1}/$MAX_CAPTURE_ATTEMPTS_PER_TURN)")
-                    val captureDurationMs = CAPTURE_DURATION_BY_ATTEMPT_MS
-                        .getOrElse(attempt) { CAPTURE_DURATION_BY_ATTEMPT_MS.last() }
-                    val stickToSelectedSource = sameSourceRetries < MAX_SAME_SOURCE_RETRIES
-                    val capture = captureFallbackAudio(
-                        durationMs = captureDurationMs,
-                        stickToSelectedSource = stickToSelectedSource,
-                    )
-                    if (capture.wav == null) {
-                        lastRejectionReason = capture.rejectionReason ?: "empty"
-                        Log.w(TAG, "audio fallback capture rejected: $lastRejectionReason")
-                        if (capture.rejectionReason == "no_audio_source") {
-                            consecutiveNoAudioRejects += 1
-                            maybeRecoverRootRoute()
-                            if (consecutiveNoAudioRejects >= NO_AUDIO_UNPIN_THRESHOLD) {
-                                resetRootCapturePin("no_audio_source_streak_$consecutiveNoAudioRejects")
-                            }
-                        } else {
-                            consecutiveNoAudioRejects = 0
-                        }
-                        if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
-                            sameSourceRetries += 1
-                            Log.i(
-                                TAG,
-                                "keeping current root source for retry ($sameSourceRetries/$MAX_SAME_SOURCE_RETRIES) reason=$lastRejectionReason",
-                            )
-                        } else {
-                            sameSourceRetries = 0
-                            rotateRootCaptureSource()
-                        }
-                        return@repeat
-                    }
-                    consecutiveNoAudioRejects = 0
-                    capture.analysis?.let { analysis ->
-                        maybeEnrollSpeaker(analysis)
-                    }
-                    if (ENABLE_DEBUG_WAV_DUMP) {
-                        persistDebugWav(
-                            prefix = "rx",
-                            wavBytes = capture.wav,
-                            hint = "a${attempt + 1}-${selectedRootCaptureSource?.name ?: "unknown"}",
-                        )
-                    }
-                    val candidateTranscript = runCatching { callSparkAsr(capture.wav) }
-                        .onFailure { error ->
-                            Log.e(TAG, "spark ASR failed", error)
-                            CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
-                        }
-                        .getOrNull()
-                        ?.let { normalizeTranscriptForCall(it) }
-                        ?.trim()
-                        .orEmpty()
-                    if (candidateTranscript.isBlank()) {
-                        Log.w(TAG, "spark ASR transcript empty")
-                        lastRejectionReason = "asr_empty"
-                        if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
-                            sameSourceRetries += 1
-                        } else {
-                            sameSourceRetries = 0
-                            rotateRootCaptureSource()
-                        }
-                        return@repeat
-                    }
-                    Log.i(TAG, "spark ASR transcript: ${candidateTranscript.take(140)}")
-                    CommandAuditLog.add("voice_bridge:asr:${candidateTranscript.take(96)}")
-                    val transcriptRejectReason = transcriptRejectReason(candidateTranscript)
-                    if (transcriptRejectReason != null) {
-                        Log.w(TAG, "spark ASR transcript rejected as no-information ($transcriptRejectReason)")
-                        CommandAuditLog.add("voice_bridge:transcript_reject:$transcriptRejectReason")
-                        lastRejectionReason = "low_quality_transcript"
-                        if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
-                            sameSourceRetries += 1
-                        } else {
-                            sameSourceRetries = 0
-                            rotateRootCaptureSource()
-                        }
-                        return@repeat
-                    }
-                    pinRootCaptureSource()
-                    sameSourceRetries = 0
-                    transcriptPreview = candidateTranscript
-                    transcriptAudioWav = capture.wav
-                    transcriptChunkCount = 1
-                }
-            }
-            if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
-                val clarificationSpoken = maybeSpeakClarification(lastRejectionReason)
-                if (!clarificationSpoken) {
+        runCatching {
+            networkExecutor.execute {
+                if (!InCallStateHolder.hasLiveCall()) {
                     speaking.set(false)
-                    val retryDelay = when (lastRejectionReason) {
-                        "no_audio_source" -> NO_AUDIO_RETRY_DELAY_MS
-                        "asr_empty", "low_quality_transcript" -> TRANSCRIPT_RETRY_DELAY_MS
-                        else -> CAPTURE_RETRY_DELAY_MS
-                    }
-                    startCaptureLoop(retryDelay)
+                    return@execute
                 }
-                return@execute
+                var transcriptPreview = ""
+                var transcriptAudioWav: ByteArray? = null
+                var transcriptChunkCount = 0
+                var lastRejectionReason: String? = null
+                var sameSourceRetries = 0
+                if (ENABLE_UTTERANCE_STATE_MACHINE) {
+                    val utterance = captureUtteranceStateMachine()
+                    if (utterance == null) {
+                        lastRejectionReason = "utterance_empty"
+                    } else {
+                        transcriptPreview = utterance.transcript
+                        transcriptAudioWav = utterance.audioWav
+                        transcriptChunkCount = utterance.chunkCount
+                    }
+                } else {
+                    repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
+                        if (transcriptPreview.isNotBlank()) {
+                            return@repeat
+                        }
+                        Log.i(TAG, "running audio fallback capture (attempt ${attempt + 1}/$MAX_CAPTURE_ATTEMPTS_PER_TURN)")
+                        val captureDurationMs = CAPTURE_DURATION_BY_ATTEMPT_MS
+                            .getOrElse(attempt) { CAPTURE_DURATION_BY_ATTEMPT_MS.last() }
+                        val stickToSelectedSource = sameSourceRetries < MAX_SAME_SOURCE_RETRIES
+                        val capture = captureFallbackAudio(
+                            durationMs = captureDurationMs,
+                            stickToSelectedSource = stickToSelectedSource,
+                        )
+                        if (capture.wav == null) {
+                            lastRejectionReason = capture.rejectionReason ?: "empty"
+                            Log.w(TAG, "audio fallback capture rejected: $lastRejectionReason")
+                            if (capture.rejectionReason == "no_audio_source") {
+                                consecutiveNoAudioRejects += 1
+                                maybeRecoverRootRoute()
+                                if (consecutiveNoAudioRejects >= NO_AUDIO_UNPIN_THRESHOLD) {
+                                    resetRootCapturePin("no_audio_source_streak_$consecutiveNoAudioRejects")
+                                }
+                            } else {
+                                consecutiveNoAudioRejects = 0
+                            }
+                            if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
+                                sameSourceRetries += 1
+                                Log.i(
+                                    TAG,
+                                    "keeping current root source for retry ($sameSourceRetries/$MAX_SAME_SOURCE_RETRIES) reason=$lastRejectionReason",
+                                )
+                            } else {
+                                sameSourceRetries = 0
+                                rotateRootCaptureSource()
+                            }
+                            return@repeat
+                        }
+                        consecutiveNoAudioRejects = 0
+                        capture.analysis?.let { analysis ->
+                            maybeEnrollSpeaker(analysis)
+                        }
+                        if (ENABLE_DEBUG_WAV_DUMP) {
+                            persistDebugWav(
+                                prefix = "rx",
+                                wavBytes = capture.wav,
+                                hint = "a${attempt + 1}-${selectedRootCaptureSource?.name ?: "unknown"}",
+                            )
+                        }
+                        val candidateTranscript = runCatching { callSparkAsr(capture.wav) }
+                            .onFailure { error ->
+                                Log.e(TAG, "spark ASR failed", error)
+                                CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
+                            }
+                            .getOrNull()
+                            ?.let { normalizeTranscriptForCall(it) }
+                            ?.trim()
+                            .orEmpty()
+                        if (candidateTranscript.isBlank()) {
+                            Log.w(TAG, "spark ASR transcript empty")
+                            lastRejectionReason = "asr_empty"
+                            if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
+                                sameSourceRetries += 1
+                            } else {
+                                sameSourceRetries = 0
+                                rotateRootCaptureSource()
+                            }
+                            return@repeat
+                        }
+                        Log.i(TAG, "spark ASR transcript: ${candidateTranscript.take(140)}")
+                        CommandAuditLog.add("voice_bridge:asr:${candidateTranscript.take(96)}")
+                        val transcriptRejectReason = transcriptRejectReason(candidateTranscript)
+                        if (transcriptRejectReason != null) {
+                            Log.w(TAG, "spark ASR transcript rejected as no-information ($transcriptRejectReason)")
+                            CommandAuditLog.add("voice_bridge:transcript_reject:$transcriptRejectReason")
+                            lastRejectionReason = "low_quality_transcript"
+                            if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
+                                sameSourceRetries += 1
+                            } else {
+                                sameSourceRetries = 0
+                                rotateRootCaptureSource()
+                            }
+                            return@repeat
+                        }
+                        pinRootCaptureSource()
+                        sameSourceRetries = 0
+                        transcriptPreview = candidateTranscript
+                        transcriptAudioWav = capture.wav
+                        transcriptChunkCount = 1
+                    }
+                }
+                if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
+                    val clarificationSpoken = maybeSpeakClarification(lastRejectionReason)
+                    if (!clarificationSpoken) {
+                        speaking.set(false)
+                        val retryDelay = when (lastRejectionReason) {
+                            "no_audio_source" -> NO_AUDIO_RETRY_DELAY_MS
+                            "asr_empty", "low_quality_transcript" -> TRANSCRIPT_RETRY_DELAY_MS
+                            else -> CAPTURE_RETRY_DELAY_MS
+                        }
+                        startCaptureLoop(retryDelay)
+                    }
+                    return@execute
+                }
+                val seedAudio = transcriptAudioWav ?: buildSilenceWav(320)
+                val assembledUtterance = if (!ENABLE_UTTERANCE_STATE_MACHINE && ENABLE_UTTERANCE_CONTINUATION && shouldCollectContinuation(transcriptPreview)) {
+                    assembleUtteranceContinuation(
+                        seedTranscript = transcriptPreview,
+                        seedAudioWav = seedAudio,
+                        seedChunkCount = transcriptChunkCount,
+                    )
+                } else {
+                    AssembledUtterance(
+                        transcript = transcriptPreview,
+                        audioWav = seedAudio,
+                        chunkCount = max(1, transcriptChunkCount),
+                    )
+                }
+                transcriptPreview = assembledUtterance.transcript
+                transcriptAudioWav = assembledUtterance.audioWav
+                transcriptChunkCount = assembledUtterance.chunkCount
+                val skipAsrForTurn = transcriptPreview.isNotBlank()
+                if (!skipAsrForTurn) {
+                    val reason = "local_asr_empty"
+                    CommandAuditLog.add("voice_bridge:turn_server_asr_fallback:$reason")
+                }
+                if (transcriptChunkCount > 1) {
+                    Log.i(TAG, "assembled utterance chunks=$transcriptChunkCount transcript=${transcriptPreview.take(140)}")
+                    CommandAuditLog.add("voice_bridge:utterance_chunks:$transcriptChunkCount")
+                }
+                val response = runCatching {
+                    callSparkTurn(
+                        transcript = transcriptPreview.takeIf { it.isNotBlank() },
+                        audioWav = transcriptAudioWav ?: buildSilenceWav(320),
+                        skipAsr = skipAsrForTurn,
+                    )
+                }.onFailure { error ->
+                    Log.e(TAG, "spark text turn failed", error)
+                    CommandAuditLog.add("voice_bridge:error:${error.message}")
+                }.getOrNull()
+                response?.transcript?.takeIf { it.isNotBlank() }?.let { turnTranscript ->
+                    Log.i(TAG, "spark turn transcript (server): ${turnTranscript.take(140)}")
+                    CommandAuditLog.add("voice_bridge:turn_asr:${turnTranscript.take(96)}")
+                }
+                if (ENABLE_DEBUG_WAV_DUMP) {
+                    val replyWav = response?.audioWavBase64
+                        ?.let { runCatching { Base64.getDecoder().decode(it.trim()) }.getOrNull() }
+                    persistDebugWav(
+                        prefix = "tx",
+                        wavBytes = replyWav,
+                        hint = transcriptPreview.take(32),
+                    )
+                }
+                val reply = response?.reply?.trim().orEmpty()
+                if (reply.isBlank()) {
+                    Log.w(TAG, "spark audio reply empty")
+                    speaking.set(false)
+                    startCaptureLoop(TRANSCRIPT_RETRY_DELAY_MS)
+                    return@execute
+                }
+                val cleanReply = sanitizeReply(reply)
+                Log.i(TAG, "spark audio reply: ${cleanReply.take(96)}")
+                val rootPlayback = if (response?.livePlaybackHandled == true) {
+                    RootPlaybackResult(
+                        played = !response.livePlaybackInterrupted,
+                        interrupted = response.livePlaybackInterrupted,
+                    )
+                } else if (ENABLE_ROOT_PCM_BRIDGE) {
+                    playReplyViaRootPcm(
+                        audioWavBase64 = response?.audioWavBase64,
+                        replyTextForEcho = cleanReply,
+                    )
+                } else {
+                    RootPlaybackResult(played = false, interrupted = false)
+                }
+                if (rootPlayback.played) {
+                    CommandAuditLog.add("voice_bridge:reply_root:${cleanReply.take(96)}")
+                    lastAssistantReplyText = cleanReply
+                    markSpeechActivity("root_reply_played")
+                    speaking.set(false)
+                    startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
+                    return@execute
+                }
+                if (rootPlayback.interrupted) {
+                    CommandAuditLog.add("voice_bridge:reply_barge_in:${cleanReply.take(96)}")
+                    lastAssistantReplyText = cleanReply
+                    markSpeechActivity("root_reply_interrupted")
+                    speaking.set(false)
+                    startCaptureLoop(BARGE_IN_RESUME_DELAY_MS)
+                    return@execute
+                }
+                if (ENABLE_ROOT_PCM_BRIDGE) {
+                    CommandAuditLog.add("voice_bridge:root_playback_failed")
+                    maybeRecoverRootRoute()
+                    markSpeechActivity("root_playback_failed")
+                    selectedRootPlaybackDevice = null
+                    speaking.set(false)
+                    startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
+                    return@execute
+                }
+                mainHandler.post {
+                    val utteranceId = "pb-${UUID.randomUUID()}"
+                    tts?.speak(cleanReply, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                    CommandAuditLog.add("voice_bridge:reply:${cleanReply.take(96)}")
+                }
             }
-            val seedAudio = transcriptAudioWav ?: buildSilenceWav(320)
-            val assembledUtterance = if (!ENABLE_UTTERANCE_STATE_MACHINE && ENABLE_UTTERANCE_CONTINUATION && shouldCollectContinuation(transcriptPreview)) {
-                assembleUtteranceContinuation(
-                    seedTranscript = transcriptPreview,
-                    seedAudioWav = seedAudio,
-                    seedChunkCount = transcriptChunkCount,
-                )
-            } else {
-                AssembledUtterance(
-                    transcript = transcriptPreview,
-                    audioWav = seedAudio,
-                    chunkCount = max(1, transcriptChunkCount),
-                )
-            }
-            transcriptPreview = assembledUtterance.transcript
-            transcriptAudioWav = assembledUtterance.audioWav
-            transcriptChunkCount = assembledUtterance.chunkCount
-            val skipAsrForTurn = transcriptPreview.isNotBlank()
-            if (!skipAsrForTurn) {
-                val reason = "local_asr_empty"
-                CommandAuditLog.add("voice_bridge:turn_server_asr_fallback:$reason")
-            }
-            if (transcriptChunkCount > 1) {
-                Log.i(TAG, "assembled utterance chunks=$transcriptChunkCount transcript=${transcriptPreview.take(140)}")
-                CommandAuditLog.add("voice_bridge:utterance_chunks:$transcriptChunkCount")
-            }
-            val response = runCatching {
-                callSparkTurn(
-                    transcript = transcriptPreview.takeIf { it.isNotBlank() },
-                    audioWav = transcriptAudioWav ?: buildSilenceWav(320),
-                    skipAsr = skipAsrForTurn,
-                )
-            }.onFailure { error ->
-                Log.e(TAG, "spark text turn failed", error)
-                CommandAuditLog.add("voice_bridge:error:${error.message}")
-            }.getOrNull()
-            response?.transcript?.takeIf { it.isNotBlank() }?.let { turnTranscript ->
-                Log.i(TAG, "spark turn transcript (server): ${turnTranscript.take(140)}")
-                CommandAuditLog.add("voice_bridge:turn_asr:${turnTranscript.take(96)}")
-            }
-            if (ENABLE_DEBUG_WAV_DUMP) {
-                val replyWav = response?.audioWavBase64
-                    ?.let { runCatching { Base64.getDecoder().decode(it.trim()) }.getOrNull() }
-                persistDebugWav(
-                    prefix = "tx",
-                    wavBytes = replyWav,
-                    hint = transcriptPreview.take(32),
-                )
-            }
-            val reply = response?.reply?.trim().orEmpty()
-            if (reply.isBlank()) {
-                Log.w(TAG, "spark audio reply empty")
-                speaking.set(false)
-                startCaptureLoop(TRANSCRIPT_RETRY_DELAY_MS)
-                return@execute
-            }
-            val cleanReply = sanitizeReply(reply)
-            Log.i(TAG, "spark audio reply: ${cleanReply.take(96)}")
-            val rootPlayback = if (response?.livePlaybackHandled == true) {
-                RootPlaybackResult(
-                    played = !response.livePlaybackInterrupted,
-                    interrupted = response.livePlaybackInterrupted,
-                )
-            } else if (ENABLE_ROOT_PCM_BRIDGE) {
-                playReplyViaRootPcm(
-                    audioWavBase64 = response?.audioWavBase64,
-                    replyTextForEcho = cleanReply,
-                )
-            } else {
-                RootPlaybackResult(played = false, interrupted = false)
-            }
-            if (rootPlayback.played) {
-                CommandAuditLog.add("voice_bridge:reply_root:${cleanReply.take(96)}")
-                lastAssistantReplyText = cleanReply
-                markSpeechActivity("root_reply_played")
-                speaking.set(false)
-                startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
-                return@execute
-            }
-            if (rootPlayback.interrupted) {
-                CommandAuditLog.add("voice_bridge:reply_barge_in:${cleanReply.take(96)}")
-                lastAssistantReplyText = cleanReply
-                markSpeechActivity("root_reply_interrupted")
-                speaking.set(false)
-                startCaptureLoop(BARGE_IN_RESUME_DELAY_MS)
-                return@execute
-            }
-            if (ENABLE_ROOT_PCM_BRIDGE) {
-                CommandAuditLog.add("voice_bridge:root_playback_failed")
-                maybeRecoverRootRoute()
-                markSpeechActivity("root_playback_failed")
-                selectedRootPlaybackDevice = null
-                speaking.set(false)
-                startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
-                return@execute
-            }
-            mainHandler.post {
-                val utteranceId = "pb-${UUID.randomUUID()}"
-                tts?.speak(cleanReply, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-                CommandAuditLog.add("voice_bridge:reply:${cleanReply.take(96)}")
-            }
+        }.onFailure { error ->
+            Log.e(TAG, "requestReply submission failed", error)
+            speaking.set(false)
+            startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
         }
     }
 
@@ -540,6 +551,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 stopSelf()
                 return@postDelayed
             }
+            Log.i(TAG, "capture loop tick")
             requestReplyFromAudioFallback()
         }, delayMs)
     }
@@ -3407,7 +3419,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val NO_AUDIO_UNPIN_THRESHOLD = 6
         private const val ENFORCE_CALL_MUTE = true
         private const val ENABLE_FOREGROUND_NOTIFICATION = false
-        private const val SEND_GREETING_ON_CONNECT = false
+        private const val SEND_GREETING_ON_CONNECT = true
         private const val ENABLE_LOCAL_TTS_FALLBACK = false
         private const val ENABLE_AUDIO_EFFECTS = true
         private const val ENABLE_SPEAKER_VERIFICATION = false
@@ -3456,13 +3468,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_TRAILING_MIN_VOICED_MS = 100
         private const val ROOT_CAPTURE_TRAILING_MIN_RMS = 28.0
         private const val ROOT_CAPTURE_MAX_MERGED_MS = 5_200
-        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(32_000, 24_000, 16_000, 8_000)
-        private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2, 1)
+        private val ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES = listOf(24_000)
+        private val ROOT_CAPTURE_CHANNEL_CANDIDATES = listOf(2)
         private const val ROOT_CAPTURE_RATE_FIX_ENABLED = false
         private const val ROOT_CAPTURE_RATE_FIX_FROM = 32_000
         private const val ROOT_CAPTURE_RATE_FIX_TO = 16_000
         private val ROOT_CAPTURE_RATE_FIX_DEVICES = setOf(20, 21, 22, 54)
-        private const val ENABLE_ADAPTIVE_CAPTURE_RATE = true
+        private const val ENABLE_ADAPTIVE_CAPTURE_RATE = false
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_MIN_SCORE = 4
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_EARLY_EXIT_SCORE = 11
         private const val ROOT_CAPTURE_ADAPTIVE_RATE_UNLOCK_STREAK = 2
@@ -3495,8 +3507,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_MIN_ALNUM_CHARS = 2
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.62
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
-        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1700, 2100, 2500)
-        private const val ENABLE_UTTERANCE_STATE_MACHINE = true
+        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
+        private const val ENABLE_UTTERANCE_STATE_MACHINE = false
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 260
         private const val UTTERANCE_PRE_ROLL_MS = 640
         private const val UTTERANCE_MIN_SPEECH_MS = 260
