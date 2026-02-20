@@ -714,7 +714,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     stopRootCaptureStreamSession("fast_post_playback_rebind_$consecutiveNoAudioRejects")
                     if (consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD) {
                         resetRootCapturePin("fast_post_playback_no_audio_$consecutiveNoAudioRejects")
-                        rotateRootCaptureSource()
                     }
                 }
                 if (consecutiveNoAudioRejects >= ROOT_CAPTURE_STREAM_RESTART_THRESHOLD) {
@@ -722,6 +721,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 if (consecutiveNoAudioRejects >= NO_AUDIO_UNPIN_THRESHOLD) {
                     resetRootCapturePin("utterance_stream_no_audio_$consecutiveNoAudioRejects")
+                }
+                if (consecutiveNoAudioRejects >= ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD) {
                     rotateRootCaptureSource()
                 }
                 if (speakingNow) {
@@ -3745,7 +3746,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
         private const val NO_AUDIO_RETRY_DELAY_MS = 450L
         private const val BARGE_IN_RESUME_DELAY_MS = 40L
-        private const val NO_AUDIO_UNPIN_THRESHOLD = 2
+        private const val NO_AUDIO_UNPIN_THRESHOLD = 6
         private const val ENFORCE_CALL_MUTE = true
         private const val ENABLE_FOREGROUND_NOTIFICATION = false
         private const val SEND_GREETING_ON_CONNECT = true
@@ -3792,6 +3793,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
         private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 320L
         private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 2
+        private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 10
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
         private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.20
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true

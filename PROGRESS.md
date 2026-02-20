@@ -3163,3 +3163,21 @@ _Last updated: 2026-02-19_
 ### Expected effect
 - Earlier stream rebind and source unpin directly after playback.
 - Reduced dead-zone before first user speech is accepted.
+
+## 2026-02-20 17:00 — Fix pitch drift from capture-source thrash
+
+### What
+- Stabilized source selection so fast recovery does not rotate `incall_cap_*` per turn:
+  - Removed forced `rotateRootCaptureSource()` from fast post-playback unpin path.
+  - Split unpin/rotate thresholds in normal path:
+    - `NO_AUDIO_UNPIN_THRESHOLD: 2 -> 6`
+    - added `ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 10`
+  - Normal path now unpins first, rotates only on sustained prolonged no-audio streak.
+
+### Why
+- Latest call logs showed every turn doing `unpinned: utterance_stream_no_audio_2`, then pinning a different device (`incall_cap_0 -> 1 -> 2 -> 3`).
+- That source thrash caused perceived pitch inconsistency and semantic drift despite WAV headers staying at 48k.
+
+### Expected effect
+- Preserve dead-zone improvements from fast stream rebind.
+- Keep capture source stable across turns, reducing pitch artifacts and reply drift.
