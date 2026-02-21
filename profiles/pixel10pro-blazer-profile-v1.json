@@ -46,10 +46,15 @@
       "channels": 2,
       "bits": 16,
       "speed_compensation": 1.5,
-      "period_size": 1024,
-      "period_count": 8,
+      "period_size": 2048,
+      "period_count": 16,
       "mmap": false,
       "notes": "Validated as audible/usable on remote call path in this profile"
+    },
+    "tuning": {
+      "persistent_session": true,
+      "lock_device_for_call": true,
+      "prebuffer_ms": 220
     },
     "validated_secondary": [],
     "known_bad": [

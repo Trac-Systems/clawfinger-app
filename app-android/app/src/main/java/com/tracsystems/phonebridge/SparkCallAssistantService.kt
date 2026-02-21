@@ -76,6 +76,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeRootTinycapBin: String = ROOT_TINYCAP_BIN
     private var runtimeRootTinyplayBin: String = ROOT_TINYPLAY_BIN
     private var runtimeRootTinymixBin: String = ROOT_TINYMIX_BIN
+    private var runtimeRootPlayPeriodSize: Int = ROOT_PLAY_PERIOD_SIZE
+    private var runtimeRootPlayPeriodCount: Int = ROOT_PLAY_PERIOD_COUNT
+    private var runtimeRootPlayUseMmap: Boolean = ROOT_PLAY_USE_MMAP
+    private var runtimeRootPlaybackPrebufferMs: Int = ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS
+    private var runtimeRootPlaybackPersistentSession: Boolean = ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION
+    private var runtimeRootPlaybackLockDeviceForCall: Boolean = ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL
     private var runtimeRouteSetCommands: List<String> = defaultRootRouteSetCommands(ROOT_TINYMIX_BIN)
     private var runtimeRouteRestoreCommands: List<String> = defaultRootRouteRestoreCommands(ROOT_TINYMIX_BIN)
     private var runtimeCaptureProbeSetCommands: List<String> = defaultRootCaptureProbeSetCommands(ROOT_TINYMIX_BIN)
@@ -88,6 +94,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var adaptiveCaptureRateNoInfoStreak: Int = 0
     private var adaptiveCaptureRateLowScoreStreak: Int = 0
     private var rootCaptureStreamSession: RootCaptureStreamSession? = null
+    private var rootPersistentPlaybackSession: RootStreamPlaybackSession? = null
+    private var rootPlaybackProfileLockedForCall: Boolean = false
     private var consecutiveNoAudioRejects: Int = 0
     private var enrolledSpeaker: SpeakerFingerprint? = null
     private val rootRollingPrebufferLock = Any()
@@ -198,6 +206,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             selectedRootCaptureSampleRate = ROOT_CAPTURE_REQUEST_SAMPLE_RATE
             selectedRootCaptureChannels = 1
             selectedRootPlaybackDevice = null
+            rootPlaybackProfileLockedForCall = false
             lastCaptureShiftSignature = null
             lastPlaybackShiftSignature = null
             adaptiveCaptureSampleRate = null
@@ -205,6 +214,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             adaptiveCaptureRateNoInfoStreak = 0
             adaptiveCaptureRateLowScoreStreak = 0
             stopRootCaptureStreamSession("service_start_reset")
+            stopRootPersistentPlaybackSession("service_start_reset")
             consecutiveNoAudioRejects = 0
             enrolledSpeaker = null
             lastAssistantReplyText = ""
@@ -254,6 +264,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             InCallStateHolder.setCallMuted(false)
         }
         stopRootCaptureStreamSession("service_destroy")
+        stopRootPersistentPlaybackSession("service_destroy")
         clearRootRollingPrebuffer()
         runCatching { turnVad?.close() }
         turnVad = null
@@ -728,10 +739,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 if (ENABLE_ROOT_PCM_BRIDGE) {
                     CommandAuditLog.add("voice_bridge:root_playback_failed")
+                    stopRootPersistentPlaybackSession(
+                        reason = "root_playback_failed",
+                        clearPlaybackShift = true,
+                    )
                     maybeRecoverRootRoute()
                     markSpeechActivity("root_playback_failed")
                     selectedRootPlaybackDevice = null
                     logPlaybackShiftClearedIfNeeded("root_playback_failed")
+                    rootPlaybackProfileLockedForCall = false
                     speaking.set(false)
                     startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
                     return@execute
@@ -2087,6 +2103,34 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun closeRootPlaybackStreamSession(
+        session: RootStreamPlaybackSession,
+        reason: String? = null,
+        clearPlaybackShift: Boolean = false,
+    ) {
+        runCatching { session.outputStream.close() }
+        stopRootPlaybackProcess(session.pid)
+        runCatching { session.fifoFile.delete() }
+        reason?.takeIf { it.isNotBlank() }?.let {
+            CommandAuditLog.add("voice_bridge:root_stream_playback_close:$it")
+        }
+        if (clearPlaybackShift) {
+            selectedRootPlaybackDevice = null
+            logPlaybackShiftClearedIfNeeded(reason ?: "playback_session_close")
+            rootPlaybackProfileLockedForCall = false
+        }
+    }
+
+    private fun stopRootPersistentPlaybackSession(reason: String? = null, clearPlaybackShift: Boolean = false) {
+        val current = rootPersistentPlaybackSession ?: return
+        rootPersistentPlaybackSession = null
+        closeRootPlaybackStreamSession(
+            session = current,
+            reason = reason,
+            clearPlaybackShift = clearPlaybackShift,
+        )
+    }
+
     private fun persistDebugWav(prefix: String, wavBytes: ByteArray?, hint: String = ""): String? {
         if (!runtimeDebugWavDumpEnabled || wavBytes == null || wavBytes.isEmpty()) {
             return null
@@ -2146,11 +2190,21 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         val normalizedByFormat = mutableMapOf<Triple<Int, Int, Int>, Pair<ByteArray, Long>>()
         ensureRootPlaybackCalibrated(reason = "reply_playback", force = false)
-        val deviceOrder = buildList {
-            selectedRootPlaybackDevice?.let { add(it) }
-            ROOT_PLAYBACK_DEVICE_CANDIDATES.forEach { candidate ->
-                if (!contains(candidate)) add(candidate)
+        val lockDeviceForCall = runtimeRootPlaybackLockDeviceForCall && rootPlaybackProfileLockedForCall
+        val preferredDeviceOrder = buildList {
+            if (lockDeviceForCall) {
+                selectedRootPlaybackDevice?.let { add(it) }
+            } else {
+                selectedRootPlaybackDevice?.let { add(it) }
+                ROOT_PLAYBACK_DEVICE_CANDIDATES.forEach { candidate ->
+                    if (!contains(candidate)) add(candidate)
+                }
             }
+        }
+        val deviceOrder = if (preferredDeviceOrder.isNotEmpty()) {
+            preferredDeviceOrder
+        } else {
+            ROOT_PLAYBACK_DEVICE_CANDIDATES
         }
         try {
             for (device in deviceOrder) {
@@ -2173,6 +2227,27 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     normalizedWav to durationMs
                 }
                 val (normalizedWav, playbackDurationMs) = prepared
+                if (runtimeRootPlaybackPersistentSession) {
+                    val playbackMono = wavToPcm16Mono(normalizedWav) ?: continue
+                    val playbackPcm = monoToInterleavedPcm16(playbackMono, playbackChannels)
+                    val playbackResult = playReplyViaRootPersistentSession(
+                        device = device,
+                        sampleRate = playbackRate,
+                        channels = playbackChannels,
+                        pcm = playbackPcm,
+                        expectedDurationMs = playbackDurationMs,
+                        replyTextForEcho = replyTextForEcho,
+                        enableBargeInInterrupt = enableBargeInInterrupt,
+                    )
+                    if (playbackResult.played || playbackResult.interrupted) {
+                        rootPlaybackProfileLockedForCall = runtimeRootPlaybackLockDeviceForCall
+                        return playbackResult
+                    }
+                    if (lockDeviceForCall) {
+                        break
+                    }
+                    continue
+                }
                 val playbackTimeoutMs = (playbackDurationMs + ROOT_PLAYBACK_TIMEOUT_MARGIN_MS)
                     .coerceIn(ROOT_PLAY_TIMEOUT_MIN_MS, ROOT_PLAY_TIMEOUT_MAX_MS)
                 val wavFile = File(filesDir, "pb-rootplay-${System.currentTimeMillis()}-$device.wav")
@@ -2205,6 +2280,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     enableBargeInInterrupt = enableBargeInInterrupt,
                 )
                 if (playbackResult.played || playbackResult.interrupted) {
+                    rootPlaybackProfileLockedForCall = runtimeRootPlaybackLockDeviceForCall
                     return playbackResult
                 }
                 if (playbackResult.timedOut && !ROOT_PLAYBACK_RETRY_ON_TIMEOUT) {
@@ -2216,6 +2292,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     )
                     if (!treatedAsPlayed) {
                         rootPlaybackCalibratedForCall = false
+                    }
+                    if (treatedAsPlayed) {
+                        rootPlaybackProfileLockedForCall = runtimeRootPlaybackLockDeviceForCall
                     }
                     return RootPlaybackResult(
                         played = treatedAsPlayed,
@@ -2231,8 +2310,179 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } finally {
             // no-op
         }
+        stopRootPersistentPlaybackSession(reason = "reply_playback_failed")
         rootPlaybackCalibratedForCall = false
         return RootPlaybackResult(played = false, interrupted = false)
+    }
+
+    private fun playReplyViaRootPersistentSession(
+        device: Int,
+        sampleRate: Int,
+        channels: Int,
+        pcm: ByteArray,
+        expectedDurationMs: Long,
+        replyTextForEcho: String?,
+        enableBargeInInterrupt: Boolean,
+    ): RootPlaybackResult {
+        if (pcm.isEmpty()) {
+            return RootPlaybackResult(played = false, interrupted = false)
+        }
+        repeat(2) { attemptIndex ->
+            val sessionResult = ensureRootPersistentPlaybackSession(
+                device = device,
+                sampleRate = sampleRate,
+                channels = channels,
+                bitsPerSample = 16,
+            ) ?: return@repeat
+            val (session, isNewSession) = sessionResult
+            val prebufferMs = if (isNewSession) runtimeRootPlaybackPrebufferMs.coerceAtLeast(0) else 0
+            val prebufferPcm = if (prebufferMs > 0) {
+                buildSilencePcm16(
+                    sampleRate = sampleRate,
+                    channels = channels,
+                    durationMs = prebufferMs,
+                )
+            } else {
+                ByteArray(0)
+            }
+            val writeOk = runCatching {
+                if (prebufferPcm.isNotEmpty()) {
+                    session.outputStream.write(prebufferPcm)
+                }
+                session.outputStream.write(pcm)
+                session.outputStream.flush()
+            }.isSuccess
+            if (!writeOk) {
+                CommandAuditLog.add("voice_bridge:root_persistent_write_fail:d$device:a${attemptIndex + 1}")
+                stopRootPersistentPlaybackSession("persistent_write_fail_d$device")
+                return@repeat
+            }
+            val monitorResult = monitorRootPersistentPlayback(
+                session = session,
+                device = device,
+                expectedDurationMs = expectedDurationMs + prebufferMs.toLong(),
+                replyTextForEcho = replyTextForEcho,
+                enableBargeInInterrupt = enableBargeInInterrupt,
+            )
+            if (monitorResult.played || monitorResult.interrupted) {
+                return monitorResult
+            }
+            stopRootPersistentPlaybackSession("persistent_watchdog_d$device")
+        }
+        return RootPlaybackResult(played = false, interrupted = false)
+    }
+
+    private fun ensureRootPersistentPlaybackSession(
+        device: Int,
+        sampleRate: Int,
+        channels: Int,
+        bitsPerSample: Int,
+    ): Pair<RootStreamPlaybackSession, Boolean>? {
+        val current = rootPersistentPlaybackSession
+        if (current != null) {
+            val formatMatches = current.device == device &&
+                current.sampleRate == sampleRate &&
+                current.channels == channels &&
+                current.bitsPerSample == bitsPerSample
+            if (formatMatches && isRootProcessAlive(current.pid)) {
+                return current to false
+            }
+            stopRootPersistentPlaybackSession("persistent_rebind:${current.device}->$device")
+        }
+
+        val fifoFile = File(filesDir, "pb-rootplay-stream-${System.currentTimeMillis()}-$device.raw")
+        val prep = RootShellRuntime.run(
+            command = "rm -f ${shellQuote(fifoFile.absolutePath)} && mkfifo ${shellQuote(fifoFile.absolutePath)} && chmod 666 ${shellQuote(fifoFile.absolutePath)}",
+            timeoutMs = 2_500L,
+        )
+        if (!prep.ok) {
+            return null
+        }
+        val pid = startRootTinyplayRawProcess(
+            fifoFile = fifoFile,
+            device = device,
+            sampleRate = sampleRate,
+            channels = channels,
+            bitsPerSample = bitsPerSample,
+        ) ?: run {
+            runCatching { fifoFile.delete() }
+            return null
+        }
+        val output = runCatching { FileOutputStream(fifoFile) }.getOrNull()
+        if (output == null) {
+            stopRootPlaybackProcess(pid)
+            runCatching { fifoFile.delete() }
+            return null
+        }
+        val session = RootStreamPlaybackSession(
+            fifoFile = fifoFile,
+            outputStream = output,
+            device = device,
+            sampleRate = sampleRate,
+            channels = channels,
+            bitsPerSample = bitsPerSample,
+            pid = pid,
+        )
+        rootPersistentPlaybackSession = session
+        selectedRootPlaybackDevice = device
+        logPlaybackShiftIfChanged(device, "persistent_playback_session")
+        CommandAuditLog.add("voice_bridge:root_persistent_session_start:d$device:r$sampleRate:c$channels")
+        return session to true
+    }
+
+    private fun monitorRootPersistentPlayback(
+        session: RootStreamPlaybackSession,
+        device: Int,
+        expectedDurationMs: Long,
+        replyTextForEcho: String?,
+        enableBargeInInterrupt: Boolean,
+    ): RootPlaybackResult {
+        val startedAt = System.currentTimeMillis()
+        val expectedStopAt = startedAt + expectedDurationMs + PLAYBACK_STUCK_GRACE_MS
+        val deadline = expectedStopAt + ROOT_PLAYBACK_TIMEOUT_MARGIN_MS
+        var nextProbeAt = startedAt + BARGE_IN_ARM_DELAY_MS
+        while (System.currentTimeMillis() < deadline) {
+            val now = System.currentTimeMillis()
+            if (!InCallStateHolder.hasLiveCall()) {
+                stopRootPersistentPlaybackSession("persistent_call_ended")
+                return RootPlaybackResult(played = false, interrupted = false)
+            }
+            if (!isRootProcessAlive(session.pid)) {
+                CommandAuditLog.add("voice_bridge:root_persistent_underrun:d$device")
+                Log.w(TAG, "root persistent tinyplay ended unexpectedly device=$device")
+                return RootPlaybackResult(played = false, interrupted = false, timedOut = true)
+            }
+            if (enableBargeInInterrupt && now >= nextProbeAt) {
+                nextProbeAt = now + BARGE_IN_PROBE_INTERVAL_MS
+                if (detectBargeInSpeech(replyTextForEcho)) {
+                    stopRootPersistentPlaybackSession("persistent_barge_in")
+                    CommandAuditLog.add("voice_bridge:barge_in")
+                    return RootPlaybackResult(played = false, interrupted = true)
+                }
+            }
+            if (now >= expectedStopAt) {
+                markSpeechActivity("root_persistent_playback:$device")
+                return RootPlaybackResult(played = true, interrupted = false)
+            }
+            try {
+                Thread.sleep(BARGE_IN_PLAYBACK_POLL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return RootPlaybackResult(played = false, interrupted = false)
+            }
+        }
+        CommandAuditLog.add("voice_bridge:root_persistent_timeout:$device")
+        Log.w(TAG, "root persistent tinyplay timeout device=$device expectedMs=$expectedDurationMs")
+        return RootPlaybackResult(played = false, interrupted = false, timedOut = true)
+    }
+
+    private fun buildSilencePcm16(sampleRate: Int, channels: Int, durationMs: Int): ByteArray {
+        val safeRate = sampleRate.coerceAtLeast(8_000)
+        val safeChannels = channels.coerceAtLeast(1)
+        val safeDuration = durationMs.coerceAtLeast(0)
+        val frameCount = ((safeRate.toLong() * safeDuration.toLong()) / 1_000L).toInt().coerceAtLeast(0)
+        val bytesPerFrame = safeChannels * 2
+        return ByteArray(frameCount * bytesPerFrame)
     }
 
     private fun appendReadyBeepTailToWav(wavBytes: ByteArray): ByteArray? {
@@ -2291,15 +2541,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             append(" -r ")
             append(sampleRate.coerceAtLeast(8_000))
             append(" -b 16")
-            if (ROOT_PLAY_PERIOD_SIZE > 0) {
+            if (runtimeRootPlayPeriodSize > 0) {
                 append(" -p ")
-                append(ROOT_PLAY_PERIOD_SIZE)
+                append(runtimeRootPlayPeriodSize)
             }
-            if (ROOT_PLAY_PERIOD_COUNT > 0) {
+            if (runtimeRootPlayPeriodCount > 0) {
                 append(" -n ")
-                append(ROOT_PLAY_PERIOD_COUNT)
+                append(runtimeRootPlayPeriodCount)
             }
-            if (ROOT_PLAY_USE_MMAP) {
+            if (runtimeRootPlayUseMmap) {
                 append(" -M")
             }
             append(" >/dev/null 2>&1 & echo $!")
@@ -3881,6 +4131,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             append(sampleRate.coerceAtLeast(8000))
             append(" -b ")
             append(bitsPerSample.coerceAtLeast(16))
+            if (runtimeRootPlayPeriodSize > 0) {
+                append(" -p ")
+                append(runtimeRootPlayPeriodSize)
+            }
+            if (runtimeRootPlayPeriodCount > 0) {
+                append(" -n ")
+                append(runtimeRootPlayPeriodCount)
+            }
+            if (runtimeRootPlayUseMmap) {
+                append(" -M")
+            }
             append(" >/dev/null 2>&1 & echo $!")
         }
         val result = RootShellRuntime.run(
@@ -4428,6 +4689,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runtimeRootTinycapBin = profile.rootTinycapBin
             runtimeRootTinyplayBin = profile.rootTinyplayBin
             runtimeRootTinymixBin = profile.rootTinymixBin
+            runtimeRootPlayPeriodSize = profile.rootPlayPeriodSize
+            runtimeRootPlayPeriodCount = profile.rootPlayPeriodCount
+            runtimeRootPlayUseMmap = profile.rootPlayUseMmap
+            runtimeRootPlaybackPrebufferMs = profile.playbackPrebufferMs
+            runtimeRootPlaybackPersistentSession = profile.playbackPersistentSession
+            runtimeRootPlaybackLockDeviceForCall = profile.playbackLockDeviceForCall
             runtimeRouteSetCommands = profile.routeSetCommands
             runtimeRouteRestoreCommands = profile.routeRestoreCommands
             runtimeCaptureProbeSetCommands = profile.captureProbeSetCommands
@@ -4480,6 +4747,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 debugWavEventsEnabled = runtimeAuditDebugWavEventsEnabled,
             )
             selectedRootPlaybackDevice = null
+            rootPlaybackProfileLockedForCall = false
             lastCaptureShiftSignature = null
             lastPlaybackShiftSignature = null
             rootPlaybackCalibratedForCall = false
@@ -4529,6 +4797,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runtimeRootTinycapBin = ROOT_TINYCAP_BIN
         runtimeRootTinyplayBin = ROOT_TINYPLAY_BIN
         runtimeRootTinymixBin = ROOT_TINYMIX_BIN
+        runtimeRootPlayPeriodSize = ROOT_PLAY_PERIOD_SIZE
+        runtimeRootPlayPeriodCount = ROOT_PLAY_PERIOD_COUNT
+        runtimeRootPlayUseMmap = ROOT_PLAY_USE_MMAP
+        runtimeRootPlaybackPrebufferMs = ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS
+        runtimeRootPlaybackPersistentSession = ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION
+        runtimeRootPlaybackLockDeviceForCall = ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL
         runtimeRouteSetCommands = defaultRootRouteSetCommands(runtimeRootTinymixBin)
         runtimeRouteRestoreCommands = defaultRootRouteRestoreCommands(runtimeRootTinymixBin)
         runtimeCaptureProbeSetCommands = defaultRootCaptureProbeSetCommands(runtimeRootTinymixBin)
@@ -4593,7 +4867,28 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val playbackRates = ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES_DEFAULT.toMutableMap()
         val playbackChannels = ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES_DEFAULT.toMutableMap()
         val playbackSpeeds = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT.toMutableMap()
-        playbackRoot?.optJSONObject("validated_primary")?.let { primary ->
+        val playbackPrimary = playbackRoot?.optJSONObject("validated_primary")
+        val rootPlayPeriodSize = playbackPrimary?.optInt("period_size", ROOT_PLAY_PERIOD_SIZE)
+            ?.takeIf { it >= 0 }
+            ?: ROOT_PLAY_PERIOD_SIZE
+        val rootPlayPeriodCount = playbackPrimary?.optInt("period_count", ROOT_PLAY_PERIOD_COUNT)
+            ?.takeIf { it >= 0 }
+            ?: ROOT_PLAY_PERIOD_COUNT
+        val rootPlayUseMmap = playbackPrimary?.optBoolean("mmap", ROOT_PLAY_USE_MMAP)
+            ?: ROOT_PLAY_USE_MMAP
+        val playbackTuning = playbackRoot?.optJSONObject("tuning")
+        val playbackPrebufferMs = playbackTuning?.optInt("prebuffer_ms", ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS)
+            ?.takeIf { it >= 0 }
+            ?: ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS
+        val playbackPersistentSession = playbackTuning?.optBoolean(
+            "persistent_session",
+            ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION,
+        ) ?: ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION
+        val playbackLockDeviceForCall = playbackTuning?.optBoolean(
+            "lock_device_for_call",
+            ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL,
+        ) ?: ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL
+        playbackPrimary?.let { primary ->
             val device = primary.optInt("device", -1)
             if (device > 0) {
                 primary.optInt("sample_rate", -1).takeIf { it > 0 }?.let { playbackRates[device] = it }
@@ -4695,6 +4990,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             rootTinycapBin = rootTinycapBin,
             rootTinyplayBin = rootTinyplayBin,
             rootTinymixBin = rootTinymixBin,
+            rootPlayPeriodSize = rootPlayPeriodSize,
+            rootPlayPeriodCount = rootPlayPeriodCount,
+            rootPlayUseMmap = rootPlayUseMmap,
+            playbackPrebufferMs = playbackPrebufferMs,
+            playbackPersistentSession = playbackPersistentSession,
+            playbackLockDeviceForCall = playbackLockDeviceForCall,
             routeSetCommands = routeSetCommands,
             routeRestoreCommands = routeRestoreCommands,
             captureProbeSetCommands = captureProbeSetCommands,
@@ -4838,6 +5139,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val rootTinycapBin: String,
         val rootTinyplayBin: String,
         val rootTinymixBin: String,
+        val rootPlayPeriodSize: Int,
+        val rootPlayPeriodCount: Int,
+        val rootPlayUseMmap: Boolean,
+        val playbackPrebufferMs: Int,
+        val playbackPersistentSession: Boolean,
+        val playbackLockDeviceForCall: Boolean,
         val routeSetCommands: List<String>,
         val routeRestoreCommands: List<String>,
         val captureProbeSetCommands: List<String>,
@@ -5106,6 +5413,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_PLAY_TIMEOUT_MIN_MS = 1_200L
         private const val ROOT_PLAY_TIMEOUT_MAX_MS = 90_000L
         private const val ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 2_500L
+        private const val ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS = 180
+        private const val ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION = true
+        private const val ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL = true
         private const val ROOT_PLAYBACK_RETRY_ON_TIMEOUT = false
         private const val ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED = true
         private const val PLAYBACK_STUCK_GRACE_MS = 350L

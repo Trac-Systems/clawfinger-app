@@ -3934,3 +3934,44 @@ _Last updated: 2026-02-19_
 - Profile pushed to phone runtime (`profile.json`) and app reloaded.
 - Dial command issued to `+4915129135779`.
 - Logs show call active + assistant start + playback launched on device `29`.
+
+## 2026-02-21 17:05 — Root playback stabilization: persistent session + profile-tuned buffering
+
+### What
+- Implemented per-call persistent root playback session for reply audio:
+  - keeps one `tinyplay` raw FIFO session alive across turns,
+  - avoids restart-per-turn playback process churn.
+- Added call-scoped playback lock behavior:
+  - when enabled, locks selected playback device for the active call after success,
+  - prevents mid-call endpoint hopping that can destabilize tone quality.
+- Added playback watchdog behavior for persistent path:
+  - detects unexpected playback-process death/timeouts,
+  - tears down/rebinds playback session (without restarting full assistant service).
+- Added configurable startup prebuffer for persistent playback path.
+- Switched `tinyplay` launch flags to runtime profile values (not hardcoded):
+  - period size / period count / mmap.
+
+### Profile wiring added
+- New profile-driven playback tuning consumed at runtime:
+  - `playback.validated_primary.period_size`
+  - `playback.validated_primary.period_count`
+  - `playback.validated_primary.mmap`
+  - `playback.tuning.persistent_session`
+  - `playback.tuning.lock_device_for_call`
+  - `playback.tuning.prebuffer_ms`
+
+### Local profile update (source of truth first)
+- Updated `profiles/pixel10pro-blazer-profile-v1.json`:
+  - `period_size: 2048`
+  - `period_count: 16`
+  - `mmap: false`
+  - `tuning.persistent_session: true`
+  - `tuning.lock_device_for_call: true`
+  - `tuning.prebuffer_ms: 220`
+
+### Validation
+- `./scripts/android-build-debug.sh` passed.
+- APK reinstalled via `./scripts/android-install-debug.sh`.
+- Updated profile pushed via `./scripts/android-push-profile.sh`.
+- Device profile file verified with new tuning fields at:
+  - `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`
