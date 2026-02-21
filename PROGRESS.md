@@ -4406,3 +4406,23 @@ _Last updated: 2026-02-19_
   - local profile overlays,
   - credential/key material patterns,
   - gradle/build/tmp outputs.
+
+## 2026-02-21 20:39 — Profile-required gateway + Clawfinger branding assets
+
+### Gateway configuration enforcement
+- Gateway endpoint configuration is now profile-only:
+  - `gateway.base_url`
+  - `gateway.bearer`
+- Removed code-path fallback behavior for gateway settings.
+- Runtime now stops service when profile is missing/invalid for required gateway settings.
+
+### Branding update
+- App display name set to `Clawfinger` (`strings.xml`).
+- Added launcher icon resource using `clawfinger_logo.png` on dark gray background:
+  - `@drawable/ic_launcher_clawfinger`.
+- Updated `AndroidManifest.xml` to use custom icon + roundIcon.
+- Updated notification display labels to `Clawfinger Voice`.
+
+### Asset handling
+- Source image moved out of `phone/` root and placed in app resources:
+  - `app-android/app/src/main/res/drawable/clawfinger_logo.png`.
