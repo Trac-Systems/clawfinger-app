@@ -2161,7 +2161,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             append(channels.coerceAtLeast(1))
             append(" -r ")
             append(sampleRate.coerceAtLeast(8_000))
-            append(" -b 16 >/dev/null 2>&1 & echo $!")
+            append(" -b 16")
+            if (ROOT_PLAY_PERIOD_SIZE > 0) {
+                append(" -p ")
+                append(ROOT_PLAY_PERIOD_SIZE)
+            }
+            if (ROOT_PLAY_PERIOD_COUNT > 0) {
+                append(" -n ")
+                append(ROOT_PLAY_PERIOD_COUNT)
+            }
+            if (ROOT_PLAY_USE_MMAP) {
+                append(" -M")
+            }
+            append(" >/dev/null 2>&1 & echo $!")
         }
         val result = RootShellRuntime.run(
             command = command,
@@ -4542,6 +4554,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_PLAYBACK_PROBE_RELEASE_MS = 24
         private const val ROOT_PLAYBACK_SAMPLE_RATE = 48_000
         private const val ROOT_PLAYBACK_CHANNELS = 1
+        private const val ROOT_PLAY_PERIOD_SIZE = 1024
+        private const val ROOT_PLAY_PERIOD_COUNT = 8
+        private const val ROOT_PLAY_USE_MMAP = false
         private const val ENABLE_BARGE_IN_INTERRUPT = false
         private const val BARGE_IN_ARM_DELAY_MS = 80L
         private const val BARGE_IN_PROBE_INTERVAL_MS = 220L
@@ -4638,8 +4653,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
         private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(29, 23, 18, 19)
         private val ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = mapOf(
-            29 to 48_000,
-            23 to 48_000,
+            29 to 32_000,
+            23 to 32_000,
         )
         private val ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = mapOf(
             29 to 2,

@@ -3576,3 +3576,23 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:00 — Playback buffer stabilization tuning for in-call fluency
+
+### What
+- Added explicit tinyplay buffering knobs to reduce underruns/chop on telephony endpoints:
+  - `ROOT_PLAY_PERIOD_SIZE = 1024`
+  - `ROOT_PLAY_PERIOD_COUNT = 8`
+  - wired into tinyplay launch (`-p`, `-n`).
+- Kept mmap off for now (`ROOT_PLAY_USE_MMAP = false`) to avoid path-specific regressions.
+- Reduced endpoint playback load by switching 29/23 from 48k to 32k while keeping stereo and speed compensation:
+  - `ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES[29|23] = 32000`
+
+### Why
+- User still reports heavy choppiness despite stable pitch.
+- This indicates transport/buffer underrun pressure more than pure pitch mismatch.
+- Lowering device rate and increasing PCM period buffering is the lowest-risk stabilization step.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
