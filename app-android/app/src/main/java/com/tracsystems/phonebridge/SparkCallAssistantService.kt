@@ -72,6 +72,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeReadyBeepFrequencyHz: Int = READY_BEEP_FREQUENCY_HZ
     private var runtimeReadyBeepAmplitude: Double = READY_BEEP_AMPLITUDE
     private var runtimeReadyBeepTailGapMs: Int = READY_BEEP_TAIL_GAP_MS
+    private var runtimeStrictStreamOnly: Boolean = ENABLE_STRICT_STREAM_ONLY
     private var runtimeRootSuPath: String = ROOT_SU_BIN
     private var runtimeRootTinycapBin: String = ROOT_TINYCAP_BIN
     private var runtimeRootTinyplayBin: String = ROOT_TINYPLAY_BIN
@@ -82,6 +83,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeRootPlaybackPrebufferMs: Int = ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS
     private var runtimeRootPlaybackPersistentSession: Boolean = ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION
     private var runtimeRootPlaybackLockDeviceForCall: Boolean = ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL
+    private var runtimeEnableRouteRecoverOnNoAudio: Boolean = ENABLE_ROOT_ROUTE_RECOVER_ON_NO_AUDIO
+    private var runtimeRootRouteRecoverMinNoAudioStreak: Int = ROOT_ROUTE_RECOVER_MIN_NO_AUDIO_STREAK
+    private var runtimeRootRouteRecoverThrottleMs: Long = ROOT_ROUTE_RECOVER_THROTTLE_MS
     private var runtimeRouteSetCommands: List<String> = defaultRootRouteSetCommands(ROOT_TINYMIX_BIN)
     private var runtimeRouteRestoreCommands: List<String> = defaultRootRouteRestoreCommands(ROOT_TINYMIX_BIN)
     private var runtimeCaptureProbeSetCommands: List<String> = defaultRootCaptureProbeSetCommands(ROOT_TINYMIX_BIN)
@@ -423,7 +427,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 var transcriptChunkCount = 0
                 var lastRejectionReason: String? = null
                 var sameSourceRetries = 0
-                val strictStreamOnly = ENABLE_STRICT_STREAM_ONLY
+                val strictStreamOnly = runtimeStrictStreamOnly || runtimePolicyNoUnvalidatedEndpointFallback
                 val useStateMachine = ENABLE_UTTERANCE_STATE_MACHINE
                 if (useStateMachine) {
                     val utterance = captureUtteranceStateMachine()
@@ -440,6 +444,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         transcriptPreview = utterance.transcript
                         transcriptAudioWav = utterance.audioWav
                         transcriptChunkCount = utterance.chunkCount
+                        if (!strictStreamOnly && transcriptPreview.isBlank()) {
+                            CommandAuditLog.add("voice_bridge:state_machine_empty_transcript_fallback")
+                            Log.i(TAG, "state-machine transcript empty; switching to fallback probe capture")
+                            transcriptAudioWav = null
+                            transcriptChunkCount = 0
+                        }
                     }
                 } else if (!strictStreamOnly) {
                     CommandAuditLog.add("voice_bridge:first_turn_force_fallback")
@@ -462,7 +472,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                             Log.w(TAG, "audio fallback capture rejected: $lastRejectionReason")
                             if (capture.rejectionReason == "no_audio_source") {
                                 consecutiveNoAudioRejects += 1
-                                maybeRecoverRootRoute()
+                                maybeRecoverRootRoute(
+                                    force = false,
+                                    reason = "fallback_no_audio_source",
+                                    noAudioStreak = consecutiveNoAudioRejects,
+                                )
                                 if (consecutiveNoAudioRejects >= noAudioUnpinThreshold()) {
                                     resetRootCapturePin("no_audio_source_streak_$consecutiveNoAudioRejects")
                                 }
@@ -743,7 +757,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         reason = "root_playback_failed",
                         clearPlaybackShift = true,
                     )
-                    maybeRecoverRootRoute()
+                    maybeRecoverRootRoute(
+                        force = true,
+                        reason = "root_playback_failed",
+                        noAudioStreak = consecutiveNoAudioRejects,
+                    )
                     markSpeechActivity("root_playback_failed")
                     selectedRootPlaybackDevice = null
                     logPlaybackShiftClearedIfNeeded("root_playback_failed")
@@ -920,7 +938,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             val streamSession = ensureRootCaptureStreamSession()
             if (streamSession == null) {
                 consecutiveNoAudioRejects += 1
-                maybeRecoverRootRoute()
+                maybeRecoverRootRoute(
+                    force = false,
+                    reason = "utterance_stream_session_null",
+                    noAudioStreak = consecutiveNoAudioRejects,
+                )
                 if (!speakingNow && elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
                     CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:stream_session_null")
                     return null
@@ -934,7 +956,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             val captured = readRootCaptureStreamChunk(streamSession, UTTERANCE_CAPTURE_CHUNK_MS)
             if (captured == null || captured.pcm.size < 2) {
                 consecutiveNoAudioRejects += 1
-                maybeRecoverRootRoute()
+                maybeRecoverRootRoute(
+                    force = false,
+                    reason = "utterance_stream_empty_chunk",
+                    noAudioStreak = consecutiveNoAudioRejects,
+                )
                 if (!speakingNow && fastEndpointMode && consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD) {
                     stopRootCaptureStreamSession("fast_post_playback_rebind_$consecutiveNoAudioRejects")
                     if (consecutiveNoAudioRejects >= fastPostPlaybackStreamUnpinThreshold()) {
@@ -1107,7 +1133,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 val reason = capture.rejectionReason ?: "empty"
                 if (reason == "no_audio_source") {
                     consecutiveNoAudioRejects += 1
-                    maybeRecoverRootRoute()
+                    maybeRecoverRootRoute(
+                        force = false,
+                        reason = "continuation_no_audio_source",
+                        noAudioStreak = consecutiveNoAudioRejects,
+                    )
                 } else {
                     consecutiveNoAudioRejects = 0
                 }
@@ -1820,9 +1850,32 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun maybeRecoverRootRoute() {
+        maybeRecoverRootRoute(
+            force = false,
+            reason = "unspecified",
+            noAudioStreak = consecutiveNoAudioRejects,
+        )
+    }
+
+    private fun maybeRecoverRootRoute(
+        force: Boolean,
+        reason: String,
+        noAudioStreak: Int,
+    ) {
+        if (!InCallStateHolder.hasLiveCall()) {
+            return
+        }
+        if (!force) {
+            if (!runtimeEnableRouteRecoverOnNoAudio) {
+                return
+            }
+            if (noAudioStreak < runtimeRootRouteRecoverMinNoAudioStreak) {
+                return
+            }
+        }
         val now = System.currentTimeMillis()
         val last = lastRootRouteRecoverAtMs.get()
-        if (now - last < ROOT_ROUTE_RECOVER_THROTTLE_MS) {
+        if (now - last < runtimeRootRouteRecoverThrottleMs) {
             return
         }
         if (!lastRootRouteRecoverAtMs.compareAndSet(last, now)) {
@@ -1832,7 +1885,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             applyRootCallRouteProfile()
             ensureRootCaptureCalibrated(reason = "route_recover", force = true)
             ensureRootPlaybackCalibrated(reason = "route_recover", force = true)
-            CommandAuditLog.add("root:route_recover:done")
+            CommandAuditLog.add("root:route_recover:done:$reason:streak=$noAudioStreak:force=$force")
         }, "pb-root-route-recover").start()
     }
 
@@ -4706,6 +4759,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runtimePolicyStrictReliabilityMode = profile.policyStrictReliabilityMode
             runtimePolicyNoUnvalidatedEndpointFallback = profile.policyNoUnvalidatedEndpointFallback
             runtimePolicyFailFastIfNoProfileMatch = profile.policyFailFastIfNoProfileMatch
+            runtimeEnableRouteRecoverOnNoAudio = profile.policyRouteRecoverOnNoAudio
+            runtimeRootRouteRecoverMinNoAudioStreak = profile.policyRouteRecoverMinNoAudioStreak
+            runtimeRootRouteRecoverThrottleMs = profile.policyRouteRecoverThrottleMs
 
             val strictMode = runtimePolicyStrictReliabilityMode || runtimePolicyNoUnvalidatedEndpointFallback
             val resolvedPlaybackCandidates = if (strictMode && profile.strictPlaybackCandidates.isNotEmpty()) {
@@ -4733,6 +4789,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = profile.playbackRateOverrides
             ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = profile.playbackChannelOverrides
             ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = profile.playbackSpeedOverrides
+            runtimeStrictStreamOnly = profile.captureStrictStreamOnly
             runtimeDebugWavDumpEnabled = profile.debugWavDumpEnabled
             runtimeDebugWavMaxFiles = profile.debugWavMaxFiles
             runtimeAuditLevel = profile.auditLevel
@@ -4756,11 +4813,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             lastPlaybackShiftSignature = null
             rootPlaybackCalibratedForCall = false
             CommandAuditLog.add(
-                "voice_bridge:profile:loaded:${profile.profileId ?: "unnamed"}:pb=${ROOT_PLAYBACK_DEVICE_CANDIDATES.joinToString(",")}:cap=${ROOT_CAPTURE_CANDIDATES.joinToString(",") { it.device.toString() }}",
+                "voice_bridge:profile:loaded:${profile.profileId ?: "unnamed"}:pb=${ROOT_PLAYBACK_DEVICE_CANDIDATES.joinToString(",")}:cap=${ROOT_CAPTURE_CANDIDATES.joinToString(",") { it.device.toString() }}:strict_stream=$runtimeStrictStreamOnly",
             )
             Log.i(
                 TAG,
-                "runtime PCM profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }}, persistent=${runtimeRootPlaybackPersistentSession})",
+                "runtime PCM profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }}, persistent=${runtimeRootPlaybackPersistentSession}, strictStream=$runtimeStrictStreamOnly)",
             )
         }.onFailure { error ->
             CommandAuditLog.add("voice_bridge:profile:load_error:${error.message?.take(80)}")
@@ -4814,6 +4871,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runtimePolicyStrictReliabilityMode = DEFAULT_POLICY_STRICT_RELIABILITY_MODE
         runtimePolicyNoUnvalidatedEndpointFallback = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
         runtimePolicyFailFastIfNoProfileMatch = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
+        runtimeEnableRouteRecoverOnNoAudio = ENABLE_ROOT_ROUTE_RECOVER_ON_NO_AUDIO
+        runtimeRootRouteRecoverMinNoAudioStreak = ROOT_ROUTE_RECOVER_MIN_NO_AUDIO_STREAK
+        runtimeRootRouteRecoverThrottleMs = ROOT_ROUTE_RECOVER_THROTTLE_MS
+        runtimeStrictStreamOnly = ENABLE_STRICT_STREAM_ONLY
         runtimeDebugWavDumpEnabled = ENABLE_DEBUG_WAV_DUMP_DEFAULT
         runtimeDebugWavMaxFiles = MAX_DEBUG_WAV_FILES_DEFAULT
         runtimeAuditLevel = DEFAULT_AUDIT_LOG_LEVEL
@@ -4926,6 +4987,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 name = known?.name ?: "capture_$device",
             )
         }
+        val captureTuning = captureRoot?.optJSONObject("tuning")
+        val captureStrictStreamOnly = captureTuning?.optBoolean("strict_stream_only", ENABLE_STRICT_STREAM_ONLY)
+            ?: ENABLE_STRICT_STREAM_ONLY
 
         val loggingRoot = root.optJSONObject("logging")
         val debugWavRoot = loggingRoot?.optJSONObject("debug_wav_dump")
@@ -4976,6 +5040,22 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             "fail_fast_if_no_profile_match",
             DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH,
         ) ?: DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
+        val policyRouteRecoverOnNoAudio = policyRoot?.optBoolean(
+            "route_recover_on_no_audio",
+            ENABLE_ROOT_ROUTE_RECOVER_ON_NO_AUDIO,
+        ) ?: ENABLE_ROOT_ROUTE_RECOVER_ON_NO_AUDIO
+        val policyRouteRecoverMinNoAudioStreak = policyRoot?.optInt(
+            "route_recover_min_no_audio_streak",
+            ROOT_ROUTE_RECOVER_MIN_NO_AUDIO_STREAK,
+        )
+            ?.takeIf { it >= 1 }
+            ?: ROOT_ROUTE_RECOVER_MIN_NO_AUDIO_STREAK
+        val policyRouteRecoverThrottleMs = policyRoot?.optLong(
+            "route_recover_throttle_ms",
+            ROOT_ROUTE_RECOVER_THROTTLE_MS,
+        )
+            ?.takeIf { it >= 250L }
+            ?: ROOT_ROUTE_RECOVER_THROTTLE_MS
 
         if (playbackCandidates.isEmpty() || captureCandidates.isEmpty()) {
             return null
@@ -4990,6 +5070,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             playbackSpeedOverrides = playbackSpeeds,
             captureCandidates = captureCandidates,
             strictCaptureCandidates = strictCaptureCandidates,
+            captureStrictStreamOnly = captureStrictStreamOnly,
             rootSuPath = rootSuPath,
             rootTinycapBin = rootTinycapBin,
             rootTinyplayBin = rootTinyplayBin,
@@ -5007,6 +5088,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             policyStrictReliabilityMode = policyStrictReliabilityMode,
             policyNoUnvalidatedEndpointFallback = policyNoUnvalidatedEndpointFallback,
             policyFailFastIfNoProfileMatch = policyFailFastIfNoProfileMatch,
+            policyRouteRecoverOnNoAudio = policyRouteRecoverOnNoAudio,
+            policyRouteRecoverMinNoAudioStreak = policyRouteRecoverMinNoAudioStreak,
+            policyRouteRecoverThrottleMs = policyRouteRecoverThrottleMs,
             debugWavDumpEnabled = debugWavDumpEnabled,
             debugWavMaxFiles = debugWavMaxFiles,
             auditLevel = auditLevel,
@@ -5139,6 +5223,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val playbackSpeedOverrides: Map<Int, Double>,
         val captureCandidates: List<RootCaptureCandidate>,
         val strictCaptureCandidates: List<Int>,
+        val captureStrictStreamOnly: Boolean,
         val rootSuPath: String,
         val rootTinycapBin: String,
         val rootTinyplayBin: String,
@@ -5156,6 +5241,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val policyStrictReliabilityMode: Boolean,
         val policyNoUnvalidatedEndpointFallback: Boolean,
         val policyFailFastIfNoProfileMatch: Boolean,
+        val policyRouteRecoverOnNoAudio: Boolean,
+        val policyRouteRecoverMinNoAudioStreak: Int,
+        val policyRouteRecoverThrottleMs: Long,
         val debugWavDumpEnabled: Boolean,
         val debugWavMaxFiles: Int,
         val auditLevel: CommandAuditLog.Level,
@@ -5431,6 +5519,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val POST_PLAYBACK_PREARM_CHUNK_MS = 120
         private const val ROOT_PLAY_START_TIMEOUT_MS = 2_500L
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
+        private const val ENABLE_ROOT_ROUTE_RECOVER_ON_NO_AUDIO = false
+        private const val ROOT_ROUTE_RECOVER_MIN_NO_AUDIO_STREAK = 10
         private const val ROOT_ROUTE_RECOVER_THROTTLE_MS = 1_800L
         private const val ROOT_CAPTURE_CALIBRATION_THROTTLE_MS = 1_600L
         private const val ROOT_CAPTURE_CALIBRATION_MIN_RMS = 10.0

@@ -4004,3 +4004,63 @@ _Last updated: 2026-02-19_
 - Reinstalled APK.
 - Re-pushed profile to `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`.
 - Force-stopped app so next call reloads profile.
+
+## 2026-02-21 17:42 — Fixed route-recovery churn causing mid-call audio degradation
+
+### Root cause found
+- Degradation was driven by repeated in-call route recovery triggers during no-audio windows, not by static PCM channel mismatch.
+- `maybeRecoverRootRoute()` was being called on transient empty stream chunks and fallback no-audio events.
+- Each recovery re-applied route + forced calibrations mid-call, which destabilized AMixMODEM timing and correlated with metallic artifacts/ASR drift.
+
+### Fix (profile-driven)
+- Added policy-tunable route-recovery gating to runtime profile:
+  - `policy.route_recover_on_no_audio`
+  - `policy.route_recover_min_no_audio_streak`
+  - `policy.route_recover_throttle_ms`
+- Changed route recovery logic:
+  - normal no-audio path now obeys policy gate + streak threshold,
+  - forced recovery still allowed for true playback failure.
+- Updated no-audio call sites to pass explicit recovery reason + streak:
+  - fallback no-audio source,
+  - utterance stream session null/empty chunk,
+  - continuation no-audio source,
+  - root playback failure (forced).
+
+### Profile update first
+- Updated `profiles/pixel10pro-blazer-profile-v1.json` policy:
+  - `route_recover_on_no_audio: false`
+  - `route_recover_min_no_audio_streak: 10`
+  - `route_recover_throttle_ms: 6000`
+
+### Deployment
+- Rebuilt app, reinstalled APK, pushed updated profile to device, forced app restart.
+
+### Validation snapshot
+- In new call logs after deployment:
+  - greeting + first turns reached `root tinyplay launch device=29 ...` and `root tinyplay ok`.
+  - repeated `root route set applied` churn during transient no-audio windows no longer present.
+
+## 2026-02-21 17:48 — Fixed post-2nd-turn silence by profile-driven stream fallback behavior
+
+### Symptom
+- Conversation often stopped reacting after 2nd turn.
+- Logs showed state-machine path producing empty local transcript and then repeated `state-machine utterance empty; strict stream mode retry`.
+
+### Root cause
+- `strict_stream_only` behavior forced stream-only capture path.
+- When state-machine yielded audio with blank transcript and server ASR still failed, app retried strict stream path instead of using fallback probe capture.
+
+### Fix
+- Made strict-stream policy runtime profile-driven:
+  - new profile field: `capture.tuning.strict_stream_only`.
+- Runtime now uses profile strict-stream flag (plus policy hard gate if set).
+- Added explicit fallback transition:
+  - if state-machine returns blank transcript and strict-stream is disabled,
+  - discard that blank state-machine turn and switch to fallback probe capture in same turn.
+
+### Profile update
+- Updated `profiles/pixel10pro-blazer-profile-v1.json`:
+  - `capture.tuning.strict_stream_only: false`
+
+### Deployment
+- Rebuilt APK, reinstalled, pushed profile, forced app reload.
