@@ -2242,10 +2242,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             rawWavBytes
         }
         val normalizedByFormat = mutableMapOf<Triple<Int, Int, Int>, Pair<ByteArray, Long>>()
-        if (ENABLE_ROOT_CALL_ROUTE_PROFILE && InCallStateHolder.hasLiveCall()) {
-            applyRootCallRouteProfile()
-            CommandAuditLog.add("root:route_set:pre_playback")
-        }
         ensureRootPlaybackCalibrated(reason = "reply_playback", force = false)
         val lockDeviceForCall = runtimeRootPlaybackLockDeviceForCall && rootPlaybackProfileLockedForCall
         val preferredDeviceOrder = buildList {

@@ -4090,16 +4090,3 @@ _Last updated: 2026-02-19_
 ### Why this is needed
 - Keeps tuned PCM profile available even when one storage path is transient/unavailable.
 - Reduces default-profile startups that lead to silent/no-greeting behavior.
-
-## 2026-02-21 17:58 — Added pre-playback route re-apply to recover missing greeting audio
-
-### Symptom
-- Calls reached active state and greeting turn completed, but remote side intermittently reported no greeting audio.
-- Logs showed `root tinyplay ok` while user still reported silence, indicating route latch drift rather than transport failure.
-
-### Change
-- In `playReplyViaRootPcm(...)`, added explicit `applyRootCallRouteProfile()` before playback attempts when in live call.
-- Added audit marker `root:route_set:pre_playback`.
-
-### Why
-- Keeps IN_CALL_MUSIC route pinned right at playback moment, reducing race/drift between service start routing and first greeting playback.
