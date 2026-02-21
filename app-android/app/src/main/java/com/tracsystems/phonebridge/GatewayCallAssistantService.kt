@@ -5546,7 +5546,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_SPEAKER_SIMILARITY = 0.52
         private const val FRAME_MS = 20
         private const val CLARIFICATION_COOLDOWN_MS = 2_800L
-        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 260L
+        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 40L
         private const val LISTEN_SPEAKER_VOLUME_FRACTION = 0.45
         private const val TTS_SPEAKER_VOLUME_FRACTION = 0.80
         private const val PROBE_CAPTURE_MS = 480
@@ -5668,7 +5668,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(900, 1200, 1500)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
         private const val ENABLE_STRICT_STREAM_ONLY = true
-        private const val UTTERANCE_CAPTURE_CHUNK_MS = 120
+        private const val UTTERANCE_CAPTURE_CHUNK_MS = 80
         private const val UTTERANCE_PRE_ROLL_MS = 1_200
         private const val UTTERANCE_MIN_SPEECH_MS = 180
         private const val UTTERANCE_SILENCE_MS = 520
