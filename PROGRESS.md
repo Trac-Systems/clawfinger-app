@@ -3346,3 +3346,40 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 03:08 — Latest-call pull and transcript analysis (greeting/beep behavior)
+
+### What
+- Pulled latest call WAV artifacts to local:
+  - `debug-wavs/latest-call-20260221-0255/`
+- Added per-call analysis note:
+  - `debug-wavs/latest-call-20260221-0255/analysis.txt`
+- Extracted SparkCallAssistant log transcripts for the same call window.
+
+### Findings
+- First detected user transcript: `Thank you.`
+- First assistant reply: `You're welcome! How can I help you today?`
+- Second detected user transcript: `Can you recommend me a movie?`
+- Second assistant reply: `Sure! Have you heard of "The Shawshank Redemption"? It's a great film about friendship and hope.`
+- No direct logcat marker exists yet for ready-beep playback (current code writes beep markers to `CommandAuditLog`, not `Logcat`).
+- Timeline indicates two root playback completions before first capture loop tick (consistent with greeting + ready-beep before listening starts).
+
+## 2026-02-21 03:17 — Beep timing and greeting reliability adjustments
+
+### What
+- Changed listen handoff flow so capture starts first, then ready-beep plays asynchronously:
+  - `startCaptureLoopWithReadyCue()` now triggers capture loop before beep playback.
+- Added explicit logcat output for beep status:
+  - `ready beep played: <reason>` / `ready beep failed: <reason>`.
+- Strengthened greeting behavior by forcing fresh session reset for greeting request:
+  - `callSparkTurn(..., resetSession = true)` in `requestGreeting()`.
+- Added `resetSession` plumbing through turn calls (`callSparkTurn`, json, stream) and `reset_session=true` payload handling.
+- Tightened greeting instruction string to "Output exactly this and nothing else..." form.
+
+### Why
+- User started speaking into beep; previous synchronous beep blocked capture start and clipped utterance start.
+- Greeting occasionally drifted from requested intro phrase; forcing session reset improves adherence.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.

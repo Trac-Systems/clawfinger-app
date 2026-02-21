@@ -278,8 +278,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         networkExecutor.execute {
             val response = runCatching {
                 callSparkTurn(
-                    transcript = "Say exactly: Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead.",
+                    transcript = "Output exactly this and nothing else: Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead.",
                     audioWav = buildSilenceWav(),
+                    resetSession = true,
                 )
             }.onFailure { error ->
                 Log.e(TAG, "spark greeting failed", error)
@@ -711,8 +712,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startCaptureLoopWithReadyCue(delayMs: Long, reason: String) {
-        maybePlayReadyBeepCue(reason)
         startCaptureLoop(delayMs)
+        Thread({
+            maybePlayReadyBeepCue(reason)
+        }, "pb-ready-beep").start()
     }
 
     private fun maybePlayReadyBeepCue(reason: String) {
@@ -738,8 +741,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
         if (result.played) {
             CommandAuditLog.add("voice_bridge:ready_beep:$reason")
+            Log.i(TAG, "ready beep played: $reason")
         } else {
             CommandAuditLog.add("voice_bridge:ready_beep_fail:$reason")
+            Log.w(TAG, "ready beep failed: $reason")
         }
     }
 
@@ -2980,13 +2985,22 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return json.optString("transcript", "")
     }
 
-    private fun callSparkTurn(transcript: String?, audioWav: ByteArray?, skipAsr: Boolean = false): SparkTurnResponse {
+    private fun callSparkTurn(
+        transcript: String?,
+        audioWav: ByteArray?,
+        skipAsr: Boolean = false,
+        resetSession: Boolean = false,
+    ): SparkTurnResponse {
+        if (resetSession) {
+            sessionId = null
+        }
         if (ENABLE_SPARK_TURN_STREAM) {
             val streamResult = runCatching {
                 callSparkTurnStream(
                     transcript = transcript,
                     audioWav = audioWav,
                     skipAsr = skipAsr,
+                    resetSession = resetSession,
                 )
             }.onFailure { error ->
                 Log.w(TAG, "spark stream turn failed, falling back to json endpoint", error)
@@ -3002,10 +3016,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             transcript = transcript,
             audioWav = audioWav,
             skipAsr = skipAsr,
+            resetSession = resetSession,
         )
     }
 
-    private fun callSparkTurnJson(transcript: String?, audioWav: ByteArray?, skipAsr: Boolean = false): SparkTurnResponse {
+    private fun callSparkTurnJson(
+        transcript: String?,
+        audioWav: ByteArray?,
+        skipAsr: Boolean = false,
+        resetSession: Boolean = false,
+    ): SparkTurnResponse {
         val boundary = "----PhoneBridge${System.currentTimeMillis()}"
         val url = URL("${SparkConfig.baseUrl}/api/turn")
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -3021,7 +3041,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
         }
         DataOutputStream(connection.outputStream).use { out ->
-            writeFormField(out, boundary, "reset_session", "false")
+            writeFormField(out, boundary, "reset_session", if (resetSession) "true" else "false")
             sessionId?.let { writeFormField(out, boundary, "session_id", it) }
             if (!transcript.isNullOrBlank()) {
                 writeFormField(out, boundary, "transcript_hint", transcript)
@@ -3052,7 +3072,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
-    private fun callSparkTurnStream(transcript: String?, audioWav: ByteArray?, skipAsr: Boolean = false): SparkTurnResponse {
+    private fun callSparkTurnStream(
+        transcript: String?,
+        audioWav: ByteArray?,
+        skipAsr: Boolean = false,
+        resetSession: Boolean = false,
+    ): SparkTurnResponse {
         val boundary = "----PhoneBridgeStream${System.currentTimeMillis()}"
         val url = URL("${SparkConfig.baseUrl}/api/turn/stream")
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -3068,7 +3093,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
         }
         DataOutputStream(connection.outputStream).use { out ->
-            writeFormField(out, boundary, "reset_session", "false")
+            writeFormField(out, boundary, "reset_session", if (resetSession) "true" else "false")
             sessionId?.let { writeFormField(out, boundary, "session_id", it) }
             if (!transcript.isNullOrBlank()) {
                 writeFormField(out, boundary, "transcript_hint", transcript)
