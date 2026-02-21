@@ -118,8 +118,8 @@
   "policy": {
     "no_unvalidated_endpoint_fallback": true,
     "fail_fast_if_no_profile_match": false,
-    "route_recover_on_no_audio": true,
-    "route_recover_min_no_audio_streak": 2,
+    "route_recover_on_no_audio": false,
+    "route_recover_min_no_audio_streak": 6,
     "route_recover_throttle_ms": 1200
   }
 }
