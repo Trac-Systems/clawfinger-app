@@ -278,7 +278,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         networkExecutor.execute {
             val response = runCatching {
                 callSparkTurn(
-                    transcript = GREETING_PROMPT_HINT,
+                    transcript = "Output exactly this and nothing else: Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead.",
                     audioWav = buildSilenceWav(),
                     resetSession = true,
                 )
@@ -286,24 +286,18 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 Log.e(TAG, "spark greeting failed", error)
                 CommandAuditLog.add("voice_bridge:error:${error.message}")
             }.getOrNull()
-            val modelReply = sanitizeReply(
-                input = response?.reply?.trim().orEmpty(),
-                maxSentences = GREETING_MAX_REPLY_SENTENCES,
-                maxChars = GREETING_MAX_REPLY_CHARS,
-            )
-            val allowBackendGreetingAudio = isGreetingReplyCompliant(modelReply)
-            val reply = if (allowBackendGreetingAudio) modelReply else GREETING_EXACT_TEXT
+            val reply = sanitizeReply(response?.reply?.trim().orEmpty())
             if (reply.isBlank()) {
                 speaking.set(false)
                 startCaptureLoop(TRANSCRIPT_RETRY_DELAY_MS)
                 return@execute
             }
-            val rootPlayback = if (allowBackendGreetingAudio && response?.livePlaybackHandled == true) {
+            val rootPlayback = if (response?.livePlaybackHandled == true) {
                 RootPlaybackResult(
                     played = !response.livePlaybackInterrupted,
                     interrupted = response.livePlaybackInterrupted,
                 )
-            } else if (allowBackendGreetingAudio && ENABLE_ROOT_PCM_BRIDGE) {
+            } else if (ENABLE_ROOT_PCM_BRIDGE) {
                 playReplyViaRootPcm(
                     audioWavBase64 = response?.audioWavBase64,
                     replyTextForEcho = reply,
@@ -331,7 +325,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 )
                 return@execute
             }
-            if (allowBackendGreetingAudio && ENABLE_ROOT_PCM_BRIDGE) {
+            if (ENABLE_ROOT_PCM_BRIDGE) {
                 CommandAuditLog.add("voice_bridge:greeting_root_playback_failed")
                 speaking.set(false)
                 startCaptureLoop(NO_AUDIO_RETRY_DELAY_MS)
@@ -2819,11 +2813,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return null
     }
 
-    private fun sanitizeReply(
-        input: String,
-        maxSentences: Int = MAX_REPLY_SENTENCES,
-        maxChars: Int = MAX_REPLY_CHARS,
-    ): String {
+    private fun sanitizeReply(input: String): String {
         val cleaned = input
             .replace(Regex("[*`_~]"), "")
             .replace(Regex("\\s+"), " ")
@@ -2849,28 +2839,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
             }
             deduped.add(sentence)
-            if (deduped.size >= maxSentences) {
+            if (deduped.size >= MAX_REPLY_SENTENCES) {
                 break
             }
         }
         val clipped = deduped.joinToString(" ").trim().ifBlank { cleaned }
-        return if (clipped.length > maxChars) {
-            clipped.take(maxChars).trimEnd()
+        return if (clipped.length > MAX_REPLY_CHARS) {
+            clipped.take(MAX_REPLY_CHARS).trimEnd()
         } else {
             clipped
         }
-    }
-
-    private fun isGreetingReplyCompliant(reply: String): Boolean {
-        if (reply.isBlank()) return false
-        val normalized = reply
-            .lowercase(Locale.US)
-            .replace(Regex("[^a-z0-9\\s']"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (normalized.isBlank()) return false
-        return normalized.contains("wait for the beep before responding") &&
-            normalized.contains("please go ahead")
     }
 
     private fun isBackendClarifyReply(reply: String): Boolean {
@@ -4253,10 +4231,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val SHORT_TURN_MAX_TOKENS = 2
         private const val SHORT_TURN_CONSENSUS_OVERLAP_THRESHOLD = 0.45
         private const val SUPPRESS_BACKEND_CLARIFY_REPLY = true
-        private const val GREETING_EXACT_TEXT = "Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead."
-        private const val GREETING_PROMPT_HINT = "Return exactly this text and nothing else: \"$GREETING_EXACT_TEXT\""
-        private const val GREETING_MAX_REPLY_SENTENCES = 6
-        private const val GREETING_MAX_REPLY_CHARS = 520
         private const val MAX_REPLY_SENTENCES = 3
         private const val MAX_REPLY_CHARS = 420
         private const val REPLY_SENTENCE_DEDUP_OVERLAP_THRESHOLD = 0.85
