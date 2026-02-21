@@ -1,5 +1,9 @@
 {
   "profile_id": "pixel10pro_blazer_v1",
+  "gateway": {
+    "base_url": "http://192.168.178.30:8996",
+    "bearer": "41154c137d0225c8a8d1abc6f659a39811e6a40fd3851bce40da2604ae37ddf3"
+  },
   "root_binaries": {
     "su": "/data/adb/ap/bin/su",
     "tinycap": "/data/adb/service.d/phonebridge-tinycap",

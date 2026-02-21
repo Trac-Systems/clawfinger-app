@@ -4376,3 +4376,33 @@ _Last updated: 2026-02-19_
   - same artifact pull requirement (WAVs + transcriptions) before tuning,
   - human validates remote-heard playback quality (`normal/high/low/choppy`) and reports back to AI,
   - AI tunes only active playback endpoint settings, pushes profile, and iterates until stable.
+
+## 2026-02-21 20:31 — Gateway-agnostic naming + profile-owned gateway config
+
+### Changes
+- Removed Spark-specific naming from app runtime paths:
+  - service class renamed to `GatewayCallAssistantService`,
+  - call helper methods renamed to `callGateway*`,
+  - response/config types renamed to gateway-neutral names.
+- Android wiring updated to new service class in:
+  - `AndroidManifest.xml`,
+  - `BridgeInCallService.kt`,
+  - `MainActivity.kt`.
+- Enforced gateway connection settings from profile:
+  - added required profile section `gateway` with `base_url` + `bearer`,
+  - runtime parser now rejects profile when gateway settings are missing/blank,
+  - service stops when profile is missing/invalid (no code fallback gateway).
+- Added gateway settings to active profile file:
+  - `profiles/pixel10pro-blazer-profile-v1.json` now includes `gateway.base_url` and `gateway.bearer`.
+
+### Display naming
+- App display name changed to `Clawfinger` (capital C).
+- Foreground notification label changed to `Clawfinger Voice`.
+
+### Repo hygiene
+- Expanded `.gitignore` to block local/runtime/dangerous artifacts from accidental public commits:
+  - debug wav dumps,
+  - local operational folders (`remote-copy`, `root-work`, `rootd`),
+  - local profile overlays,
+  - credential/key material patterns,
+  - gradle/build/tmp outputs.

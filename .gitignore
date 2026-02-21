@@ -1,0 +1,57 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+
+# Build artifacts
+build/
+dist/
+out/
+tmp/
+.tmp/
+
+# Android / Gradle
+.gradle/
+.kotlin/
+local.properties
+app-android/.gradle/
+app-android/.kotlin/
+app-android/build/
+app-android/app/build/
+app-android/local.properties
+
+# Logs / runtime dumps
+logs/
+*.log
+debug-wavs/
+
+# Local operational artifacts
+remote-copy/
+root-work/
+rootd/
+
+# Local profile/runtime overlays
+profiles/profile.json
+profiles/*.local.json
+
+# Secrets / credentials
+.env
+.env.*
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+*.crt
+*.cer
+*.mobileprovision

@@ -1,11 +1,11 @@
 # VOICE-BRIDGE-SKILL
 
 ## Purpose
-Runbook for rooted Pixel telephony audio bridge + Spark voice gateway (ASR/LLM/TTS), with profile-driven tuning only.
+Runbook for rooted Pixel telephony audio bridge + external voice gateway (ASR/LLM/TTS), with profile-driven tuning only.
 
 ## Dependencies
 - Root setup: `phone/ROOT-SKILL-PIXEL10PRO.md`
-- App service: `phone/app-android/app/src/main/java/com/tracsystems/phonebridge/SparkCallAssistantService.kt`
+- App service: `phone/app-android/app/src/main/java/com/tracsystems/phonebridge/GatewayCallAssistantService.kt`
 
 ## Runtime architecture
 - RX path: in-call downlink PCM (`tinycap`) -> gateway ASR/turn -> TTS WAV.
@@ -19,6 +19,9 @@ Runbook for rooted Pixel telephony audio bridge + Spark voice gateway (ASR/LLM/T
 
 ### Required profile sections
 - `root_binaries`
+- `gateway`
+  - `base_url`
+  - `bearer`
 - `route_profile.set` / `route_profile.restore`
 - `playback.candidate_order_in_app`
 - `playback.endpoint_settings.<pcm_index>`
@@ -46,8 +49,9 @@ Runbook for rooted Pixel telephony audio bridge + Spark voice gateway (ASR/LLM/T
 - Battery mode for app: `Unrestricted`.
 
 ## Gateway contract
+- Gateway connection is read from profile (`gateway.base_url`, `gateway.bearer`).
 - Health:
-  - `curl -H "Authorization: Bearer <token>" http://192.168.178.30:8996/health`
+  - `curl -H "Authorization: Bearer <token>" <base_url>/health`
 - Voice endpoints:
   - `POST /api/asr`
   - `POST /api/turn`

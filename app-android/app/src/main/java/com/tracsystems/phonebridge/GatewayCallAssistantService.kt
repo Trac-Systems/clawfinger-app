@@ -50,7 +50,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.PI
 
-class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
+class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val networkExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
@@ -78,6 +78,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeRootTinycapBin: String = ROOT_TINYCAP_BIN
     private var runtimeRootTinyplayBin: String = ROOT_TINYPLAY_BIN
     private var runtimeRootTinymixBin: String = ROOT_TINYMIX_BIN
+    private var runtimeGatewayBaseUrl: String = ""
+    private var runtimeGatewayBearer: String = ""
     private var runtimeRootPlayPeriodSize: Int = ROOT_PLAY_PERIOD_SIZE
     private var runtimeRootPlayPeriodCount: Int = ROOT_PLAY_PERIOD_COUNT
     private var runtimeRootPlayUseMmap: Boolean = ROOT_PLAY_USE_MMAP
@@ -243,7 +245,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             initializeRootRuntime()
             applyRootCallRouteProfile()
             CommandAuditLog.add("root:route_set_sync:done")
-            ensureRootCaptureCalibrated(reason = "service_start_pre_greeting", force = true)
             enableCallAudioRoute()
             InCallStateHolder.setSpeakerRoute(FORCE_SPEAKER_ROUTE)
             enforceCallMute()
@@ -349,13 +350,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         speaking.set(true)
         networkExecutor.execute {
             val response = runCatching {
-                callSparkTurn(
+                callGatewayTurn(
                     transcript = "Output exactly this and nothing else: Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead.",
                     audioWav = buildSilenceWav(),
                     resetSession = true,
                 )
             }.onFailure { error ->
-                Log.e(TAG, "spark greeting failed", error)
+                Log.e(TAG, "gateway greeting failed", error)
                 CommandAuditLog.add("voice_bridge:error:${error.message}")
             }.getOrNull()
             val reply = sanitizeReply(response?.reply?.trim().orEmpty())
@@ -404,7 +405,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 startCaptureLoop(NO_AUDIO_RETRY_DELAY_MS)
                 return@execute
             }
-            Log.i(TAG, "spark greeting: ${reply.take(96)}")
+            Log.i(TAG, "gateway greeting: ${reply.take(96)}")
             mainHandler.post {
                 val utteranceId = "pb-${UUID.randomUUID()}"
                 tts?.speak(reply, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
@@ -543,9 +544,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                                 .let { normalizeTranscriptForCall(it) }
                                 .trim()
                         } else {
-                            runCatching { callSparkAsr(capture.wav) }
+                            runCatching { callGatewayAsr(capture.wav) }
                                 .onFailure { error ->
-                                    Log.e(TAG, "spark ASR failed", error)
+                                    Log.e(TAG, "gateway ASR failed", error)
                                     CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
                                 }
                                 .getOrNull()
@@ -554,7 +555,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                                 .orEmpty()
                         }
                         if (candidateTranscript.isBlank()) {
-                            Log.w(TAG, "spark ASR transcript empty")
+                            Log.w(TAG, "gateway ASR transcript empty")
                             lastRejectionReason = "asr_empty"
                             if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
                                 sameSourceRetries += 1
@@ -564,11 +565,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                             }
                             return@repeat
                         }
-                        Log.i(TAG, "spark ASR transcript: ${candidateTranscript.take(140)}")
+                        Log.i(TAG, "gateway ASR transcript: ${candidateTranscript.take(140)}")
                         CommandAuditLog.add("voice_bridge:asr:${candidateTranscript.take(96)}")
                         val transcriptRejectReason = transcriptRejectReason(candidateTranscript)
                         if (transcriptRejectReason != null) {
-                            Log.w(TAG, "spark ASR transcript rejected as no-information ($transcriptRejectReason)")
+                            Log.w(TAG, "gateway ASR transcript rejected as no-information ($transcriptRejectReason)")
                             CommandAuditLog.add("voice_bridge:transcript_reject:$transcriptRejectReason")
                             lastRejectionReason = "low_quality_transcript"
                             if (shouldRetrySameSource(lastRejectionReason, sameSourceRetries)) {
@@ -672,17 +673,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     CommandAuditLog.add("voice_bridge:utterance_chunks:$transcriptChunkCount")
                 }
                 val response = runCatching {
-                    callSparkTurn(
+                    callGatewayTurn(
                         transcript = if (ENABLE_LOCAL_TRANSCRIPT_HINT) transcriptPreview.takeIf { it.isNotBlank() } else null,
                         audioWav = transcriptAudioWav ?: buildSilenceWav(320),
                         skipAsr = skipAsrForTurn,
                     )
                 }.onFailure { error ->
-                    Log.e(TAG, "spark text turn failed", error)
+                    Log.e(TAG, "gateway text turn failed", error)
                     CommandAuditLog.add("voice_bridge:error:${error.message}")
                 }.getOrNull()
                 response?.transcript?.takeIf { it.isNotBlank() }?.let { turnTranscript ->
-                    Log.i(TAG, "spark turn transcript (server): ${turnTranscript.take(140)}")
+                    Log.i(TAG, "gateway turn transcript (server): ${turnTranscript.take(140)}")
                     CommandAuditLog.add("voice_bridge:turn_asr:${turnTranscript.take(96)}")
                 }
                 if (runtimeDebugWavDumpEnabled) {
@@ -696,7 +697,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 val reply = response?.reply?.trim().orEmpty()
                 if (reply.isBlank()) {
-                    Log.w(TAG, "spark audio reply empty")
+                    Log.w(TAG, "gateway audio reply empty")
                     speaking.set(false)
                     startCaptureLoop(TRANSCRIPT_RETRY_DELAY_MS)
                     return@execute
@@ -708,7 +709,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
                     return@execute
                 }
-                Log.i(TAG, "spark audio reply: ${cleanReply.take(96)}")
+                Log.i(TAG, "gateway audio reply: ${cleanReply.take(96)}")
                 markStartupRecoveryComplete("first_turn_ok")
                 val rootPlayback = if (response?.livePlaybackHandled == true) {
                     RootPlaybackResult(
@@ -1156,9 +1157,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     hint = "c${windowIndex + 1}-${selectedRootCaptureSource?.name ?: "unknown"}",
                 )
             }
-            val continuationTranscript = runCatching { callSparkAsr(capture.wav) }
+            val continuationTranscript = runCatching { callGatewayAsr(capture.wav) }
                 .onFailure { error ->
-                    Log.e(TAG, "spark ASR continuation failed", error)
+                    Log.e(TAG, "gateway ASR continuation failed", error)
                     CommandAuditLog.add("voice_bridge:asr_cont_error:${error.message}")
                 }
                 .getOrNull()
@@ -2833,7 +2834,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             return true
         }
         val probeWav = pcm16ToWav(probe.pcm, probe.sampleRate)
-        val transcript = runCatching { callSparkAsr(probeWav) }
+        val transcript = runCatching { callGatewayAsr(probeWav) }
             .getOrNull()
             ?.let { normalizeTranscriptForCall(it) }
             ?.trim()
@@ -3433,7 +3434,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (tokenCount <= 0 || tokenCount > SHORT_TURN_MAX_TOKENS) {
             return true
         }
-        val secondary = runCatching { callSparkAsr(audio) }
+        val secondary = runCatching { callGatewayAsr(audio) }
             .onFailure { error ->
                 Log.e(TAG, "short-turn second ASR failed", error)
                 CommandAuditLog.add("voice_bridge:short_turn_asr_error:${error.message}")
@@ -3503,9 +3504,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         var attempts = 0
         for (rate in candidates) {
             val wav = pcm16ToWav(pcm, rate)
-            val transcript = runCatching { callSparkAsr(wav) }
+            val transcript = runCatching { callGatewayAsr(wav) }
                 .onFailure { error ->
-                    Log.e(TAG, "spark ASR adaptive failed", error)
+                    Log.e(TAG, "gateway ASR adaptive failed", error)
                     CommandAuditLog.add("voice_bridge:asr_error:${error.message}")
                 }
                 .getOrNull()
@@ -3678,7 +3679,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun shellQuote(input: String): String = "'${input.replace("'", "'\"'\"'")}'"
 
-    private data class SparkTurnResponse(
+    private data class GatewayTurnResponse(
         val sessionId: String?,
         val transcript: String?,
         val reply: String?,
@@ -3767,9 +3768,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val tilt: Double,
     )
 
-    private fun callSparkAsr(audioWav: ByteArray?): String {
+    private fun callGatewayAsr(audioWav: ByteArray?): String {
         val boundary = "----PhoneBridgeAsr${System.currentTimeMillis()}"
-        val url = URL("${SparkConfig.baseUrl}/api/asr")
+        val url = URL("${runtimeGatewayBaseUrl}/api/asr")
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
@@ -3778,8 +3779,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             readTimeout = 45_000
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            if (SparkConfig.bearer.isNotBlank()) {
-                setRequestProperty("Authorization", "Bearer ${SparkConfig.bearer}")
+            if (runtimeGatewayBearer.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer ${runtimeGatewayBearer}")
             }
         }
         DataOutputStream(connection.outputStream).use { out ->
@@ -3790,40 +3791,40 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
         if (code !in 200..299) {
-            throw IllegalStateException("spark ASR failed ($code): $body")
+            throw IllegalStateException("gateway ASR failed ($code): $body")
         }
         val json = JSONObject(body)
         return json.optString("transcript", "")
     }
 
-    private fun callSparkTurn(
+    private fun callGatewayTurn(
         transcript: String?,
         audioWav: ByteArray?,
         skipAsr: Boolean = false,
         resetSession: Boolean = false,
-    ): SparkTurnResponse {
+    ): GatewayTurnResponse {
         if (resetSession) {
             sessionId = null
         }
-        if (ENABLE_SPARK_TURN_STREAM) {
+        if (ENABLE_GATEWAY_TURN_STREAM) {
             val streamResult = runCatching {
-                callSparkTurnStream(
+                callGatewayTurnStream(
                     transcript = transcript,
                     audioWav = audioWav,
                     skipAsr = skipAsr,
                     resetSession = resetSession,
                 )
             }.onFailure { error ->
-                Log.w(TAG, "spark stream turn failed, falling back to json endpoint", error)
+                Log.w(TAG, "gateway stream turn failed, falling back to json endpoint", error)
                 CommandAuditLog.add("voice_bridge:stream_fallback:${error.message?.take(96)}")
             }.getOrNull()
             if (streamResult != null) {
-                Log.i(TAG, "spark stream turn ok")
+                Log.i(TAG, "gateway stream turn ok")
                 CommandAuditLog.add("voice_bridge:stream_ok")
                 return streamResult
             }
         }
-        return callSparkTurnJson(
+        return callGatewayTurnJson(
             transcript = transcript,
             audioWav = audioWav,
             skipAsr = skipAsr,
@@ -3831,14 +3832,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
-    private fun callSparkTurnJson(
+    private fun callGatewayTurnJson(
         transcript: String?,
         audioWav: ByteArray?,
         skipAsr: Boolean = false,
         resetSession: Boolean = false,
-    ): SparkTurnResponse {
+    ): GatewayTurnResponse {
         val boundary = "----PhoneBridge${System.currentTimeMillis()}"
-        val url = URL("${SparkConfig.baseUrl}/api/turn")
+        val url = URL("${runtimeGatewayBaseUrl}/api/turn")
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
@@ -3847,8 +3848,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             readTimeout = 45_000
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            if (SparkConfig.bearer.isNotBlank()) {
-                setRequestProperty("Authorization", "Bearer ${SparkConfig.bearer}")
+            if (runtimeGatewayBearer.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer ${runtimeGatewayBearer}")
             }
         }
         DataOutputStream(connection.outputStream).use { out ->
@@ -3867,11 +3868,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
         if (code !in 200..299) {
-            throw IllegalStateException("spark turn failed ($code): $body")
+            throw IllegalStateException("gateway turn failed ($code): $body")
         }
         val json = JSONObject(body)
         sessionId = json.optString("session_id", sessionId.orEmpty()).ifBlank { sessionId }
-        return SparkTurnResponse(
+        return GatewayTurnResponse(
             sessionId = sessionId,
             transcript = json.optString("transcript", ""),
             reply = json.optString("reply", ""),
@@ -3883,24 +3884,24 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
-    private fun callSparkTurnStream(
+    private fun callGatewayTurnStream(
         transcript: String?,
         audioWav: ByteArray?,
         skipAsr: Boolean = false,
         resetSession: Boolean = false,
-    ): SparkTurnResponse {
+    ): GatewayTurnResponse {
         val boundary = "----PhoneBridgeStream${System.currentTimeMillis()}"
-        val url = URL("${SparkConfig.baseUrl}/api/turn/stream")
+        val url = URL("${runtimeGatewayBaseUrl}/api/turn/stream")
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
             doInput = true
             connectTimeout = 20_000
-            readTimeout = SPARK_TURN_STREAM_READ_TIMEOUT_MS
+            readTimeout = GATEWAY_TURN_STREAM_READ_TIMEOUT_MS
             setRequestProperty("Accept", "application/x-ndjson")
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            if (SparkConfig.bearer.isNotBlank()) {
-                setRequestProperty("Authorization", "Bearer ${SparkConfig.bearer}")
+            if (runtimeGatewayBearer.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer ${runtimeGatewayBearer}")
             }
         }
         DataOutputStream(connection.outputStream).use { out ->
@@ -3918,14 +3919,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val code = connection.responseCode
         if (code !in 200..299) {
             val body = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            throw IllegalStateException("spark stream turn failed ($code): $body")
+            throw IllegalStateException("gateway stream turn failed ($code): $body")
         }
 
         var parsedSessionId = sessionId
         var parsedTranscript = ""
         var parsedReply = ""
         val audioChunks = linkedMapOf<Int, ByteArray>()
-        val livePlaybackEnabled = ENABLE_ROOT_PCM_BRIDGE && ENABLE_SPARK_STREAM_LIVE_PLAYBACK
+        val livePlaybackEnabled = ENABLE_ROOT_PCM_BRIDGE && ENABLE_GATEWAY_STREAM_LIVE_PLAYBACK
         var liveSession: RootStreamPlaybackSession? = null
         var livePlaybackFailed = false
         var livePlaybackInterrupted = false
@@ -4030,7 +4031,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
                     "error" -> {
                         val detail = json.optString("detail").ifBlank { "unknown stream error" }
-                        throw IllegalStateException("spark stream error: $detail")
+                        throw IllegalStateException("gateway stream error: $detail")
                     }
                 }
             }
@@ -4078,7 +4079,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Base64.getEncoder().encodeToString(merged.toByteArray())
         }
         val shouldSuppressReplay = livePlaybackResult.played || livePlaybackResult.interrupted
-        return SparkTurnResponse(
+        return GatewayTurnResponse(
             sessionId = sessionId,
             transcript = parsedTranscript,
             reply = parsedReply,
@@ -4737,7 +4738,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 manager.createNotificationChannel(
                     NotificationChannel(
                         channelId,
-                        "PhoneBridge Voice",
+                        "Clawfinger Voice",
                         NotificationManager.IMPORTANCE_LOW,
                     ),
                 )
@@ -4752,8 +4753,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         val channelId = ensureNotificationChannel()
         val notification = Notification.Builder(this, channelId)
-            .setContentTitle("PhoneBridge Voice")
-            .setContentText("Spark call assistant active")
+            .setContentTitle("Clawfinger Voice")
+            .setContentText("Clawfinger call assistant active")
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setOngoing(true)
             .build()
@@ -4781,8 +4782,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         val profileFile = resolveRuntimeProfileFile()
         if (profileFile == null) {
-            Log.w(TAG, "runtime PCM profile not found; using defaults")
+            Log.e(TAG, "runtime profile not found; gateway config is required")
             CommandAuditLog.add("voice_bridge:profile:not_found")
+            stopSelf()
             return
         }
         runCatching {
@@ -4791,13 +4793,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }.onSuccess { profile ->
             if (profile == null) {
                 CommandAuditLog.add("voice_bridge:profile:parse_none:${profileFile.absolutePath}")
-                Log.w(TAG, "runtime PCM profile parse returned null for ${profileFile.absolutePath}; using defaults")
+                Log.e(TAG, "runtime profile parse failed for ${profileFile.absolutePath}; gateway config is required")
+                stopSelf()
                 return@onSuccess
             }
             runtimeRootSuPath = profile.rootSuPath
             runtimeRootTinycapBin = profile.rootTinycapBin
             runtimeRootTinyplayBin = profile.rootTinyplayBin
             runtimeRootTinymixBin = profile.rootTinymixBin
+            runtimeGatewayBaseUrl = profile.gatewayBaseUrl
+            runtimeGatewayBearer = profile.gatewayBearer
             runtimeRootPlayPeriodSize = profile.rootPlayPeriodSize
             runtimeRootPlayPeriodCount = profile.rootPlayPeriodCount
             runtimeRootPlayUseMmap = profile.rootPlayUseMmap
@@ -4859,7 +4864,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             )
             Log.i(
                 TAG,
-                "runtime PCM profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }}, captureRateOverrides=${runtimeCaptureRequestRateOverrides}, captureChannelOverrides=${runtimeCaptureRequestChannelOverrides}, captureEffectiveOverrides=${runtimeCaptureEffectiveRateOverrides}, persistent=${runtimeRootPlaybackPersistentSession}, strictStream=$runtimeStrictStreamOnly)",
+                "runtime profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, gateway=${runtimeGatewayBaseUrl}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }}, captureRateOverrides=${runtimeCaptureRequestRateOverrides}, captureChannelOverrides=${runtimeCaptureRequestChannelOverrides}, captureEffectiveOverrides=${runtimeCaptureEffectiveRateOverrides}, persistent=${runtimeRootPlaybackPersistentSession}, strictStream=$runtimeStrictStreamOnly)",
             )
         }.onFailure { error ->
             CommandAuditLog.add("voice_bridge:profile:load_error:${error.message?.take(80)}")
@@ -4914,6 +4919,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runtimeRootTinycapBin = ROOT_TINYCAP_BIN
         runtimeRootTinyplayBin = ROOT_TINYPLAY_BIN
         runtimeRootTinymixBin = ROOT_TINYMIX_BIN
+        runtimeGatewayBaseUrl = ""
+        runtimeGatewayBearer = ""
         runtimeRootPlayPeriodSize = ROOT_PLAY_PERIOD_SIZE
         runtimeRootPlayPeriodCount = ROOT_PLAY_PERIOD_COUNT
         runtimeRootPlayUseMmap = ROOT_PLAY_USE_MMAP
@@ -4961,6 +4968,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val rootTinycapBin = rootBinaries?.optString("tinycap")?.trim().takeIf { !it.isNullOrBlank() } ?: ROOT_TINYCAP_BIN
         val rootTinyplayBin = rootBinaries?.optString("tinyplay")?.trim().takeIf { !it.isNullOrBlank() } ?: ROOT_TINYPLAY_BIN
         val rootTinymixBin = rootBinaries?.optString("tinymix")?.trim().takeIf { !it.isNullOrBlank() } ?: ROOT_TINYMIX_BIN
+        val gatewayRoot = root.optJSONObject("gateway") ?: return null
+        val gatewayBaseUrl = gatewayRoot.optString("base_url").trim()
+            .ifBlank { gatewayRoot.optString("baseUrl").trim() }
+        val gatewayBearer = gatewayRoot.optString("bearer").trim()
+            .ifBlank { gatewayRoot.optString("api_key").trim() }
+        if (gatewayBaseUrl.isBlank() || gatewayBearer.isBlank()) {
+            return null
+        }
 
         val routeProfileRoot = root.optJSONObject("route_profile")
         val routeSetCommands = parseStringArray(routeProfileRoot?.optJSONArray("set"))
@@ -5116,6 +5131,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
         return RuntimePcmProfile(
             profileId = profileId,
+            gatewayBaseUrl = gatewayBaseUrl,
+            gatewayBearer = gatewayBearer,
             playbackCandidates = playbackCandidates,
             playbackRateOverrides = playbackRates,
             playbackChannelOverrides = playbackChannels,
@@ -5270,11 +5287,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
-    private object SparkConfig {
-        const val baseUrl = "http://192.168.178.30:8996"
-        const val bearer = "41154c137d0225c8a8d1abc6f659a39811e6a40fd3851bce40da2604ae37ddf3"
-    }
-
     private data class AudioSourceCandidate(
         val id: Int,
         val name: String,
@@ -5287,6 +5299,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private data class RuntimePcmProfile(
         val profileId: String?,
+        val gatewayBaseUrl: String,
+        val gatewayBearer: String,
         val playbackCandidates: List<Int>,
         val playbackRateOverrides: Map<Int, Int>,
         val playbackChannelOverrides: Map<Int, Int>,
@@ -5462,7 +5476,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     companion object {
-        private const val TAG = "SparkCallAssistant"
+        private const val TAG = "GatewayCallAssistant"
         private const val ACTION_STOP = "com.tracsystems.phonebridge.action.STOP_VOICE"
         private const val ACTION_REAPPLY_ROUTE = "com.tracsystems.phonebridge.action.REAPPLY_ROUTE"
         private const val EXTRA_ROUTE_REAPPLY_REASON = "reason"
@@ -5670,10 +5684,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_TRANSCRIPT_UNIQUE_RATIO = 0.45
         private const val TRANSCRIPT_ECHO_OVERLAP_THRESHOLD = 0.68
         private const val MIN_ADAPTIVE_ASR_ATTEMPTS_BEFORE_EARLY_EXIT = 2
-        private const val ENABLE_SPARK_TURN_STREAM = false
-        private const val ENABLE_SPARK_STREAM_LIVE_PLAYBACK = false
+        private const val ENABLE_GATEWAY_TURN_STREAM = false
+        private const val ENABLE_GATEWAY_STREAM_LIVE_PLAYBACK = false
         private const val ENABLE_LOCAL_TRANSCRIPT_HINT = false
-        private const val SPARK_TURN_STREAM_READ_TIMEOUT_MS = 90_000
+        private const val GATEWAY_TURN_STREAM_READ_TIMEOUT_MS = 90_000
         private const val TURN_ECHO_REJECT_OVERLAP_THRESHOLD = 0.70
         private const val ECHO_RETRY_DELAY_MS = 120L
         private const val POST_PLAYBACK_ECHO_GUARD_WINDOW_MS = 1_200L
@@ -5731,19 +5745,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
         private var ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT
         fun start(context: Context) {
-            val intent = Intent(context, SparkCallAssistantService::class.java)
+            val intent = Intent(context, GatewayCallAssistantService::class.java)
             context.startService(intent)
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, SparkCallAssistantService::class.java).apply {
+            val intent = Intent(context, GatewayCallAssistantService::class.java).apply {
                 action = ACTION_STOP
             }
             context.startService(intent)
         }
 
         fun requestRouteReapply(context: Context, reason: String) {
-            val intent = Intent(context, SparkCallAssistantService::class.java).apply {
+            val intent = Intent(context, GatewayCallAssistantService::class.java).apply {
                 action = ACTION_REAPPLY_ROUTE
                 putExtra(EXTRA_ROUTE_REAPPLY_REASON, reason)
             }

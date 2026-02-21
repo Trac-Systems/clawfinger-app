@@ -63,7 +63,7 @@
         </service>
 
         <service
-            android:name=".SparkCallAssistantService"
+            android:name=".GatewayCallAssistantService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="phoneCall|microphone" />

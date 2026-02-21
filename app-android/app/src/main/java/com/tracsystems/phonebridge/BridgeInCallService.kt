@@ -65,8 +65,8 @@ class BridgeInCallService : InCallService() {
             when (state) {
                 Call.STATE_ACTIVE -> {
                     InCallStateHolder.setSpeakerRoute(false)
-                    SparkCallAssistantService.start(applicationContext)
-                    if (SparkCallAssistantService.enforceCallMute()) {
+                    GatewayCallAssistantService.start(applicationContext)
+                    if (GatewayCallAssistantService.enforceCallMute()) {
                         InCallStateHolder.setCallMuted(true)
                     }
                     if (ENABLE_ROUTE_REAPPLY_BURST) {
@@ -75,7 +75,7 @@ class BridgeInCallService : InCallService() {
                     CommandAuditLog.add("call:voice_assistant:start")
                 }
                 Call.STATE_DISCONNECTED -> {
-                    SparkCallAssistantService.stop(applicationContext)
+                    GatewayCallAssistantService.stop(applicationContext)
                     CommandAuditLog.add("call:voice_assistant:stop")
                 }
             }
@@ -128,7 +128,7 @@ class BridgeInCallService : InCallService() {
             InCallStateHolder.currentState = replacement?.state ?: Call.STATE_DISCONNECTED
         }
         if (trackedCalls.isEmpty()) {
-            SparkCallAssistantService.stop(applicationContext)
+            GatewayCallAssistantService.stop(applicationContext)
             InCallStateHolder.unbindService(this)
             CommandAuditLog.add("call:all_removed")
         }
@@ -210,11 +210,11 @@ class BridgeInCallService : InCallService() {
             runCatching {
                 Thread.sleep(500)
                 if (InCallStateHolder.hasLiveCall()) {
-                    SparkCallAssistantService.requestRouteReapply(applicationContext, "post_active_500ms")
+                    GatewayCallAssistantService.requestRouteReapply(applicationContext, "post_active_500ms")
                 }
                 Thread.sleep(1_500)
                 if (InCallStateHolder.hasLiveCall()) {
-                    SparkCallAssistantService.requestRouteReapply(applicationContext, "post_active_2000ms")
+                    GatewayCallAssistantService.requestRouteReapply(applicationContext, "post_active_2000ms")
                 }
             }
         }, "pb-route-reapply-burst").start()
