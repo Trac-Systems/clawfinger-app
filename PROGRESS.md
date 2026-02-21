@@ -3699,3 +3699,16 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:28 — Increased ready-beep delay further to avoid tail underlap
+
+### What
+- Increased `READY_BEEP_START_DELAY_MS` from `320` to `560`.
+
+### Why
+- User still hears partial underlap with assistant tail.
+- More separation is required than previous offset.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
