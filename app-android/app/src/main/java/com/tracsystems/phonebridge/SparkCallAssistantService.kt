@@ -4418,7 +4418,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 4
         private const val STARTUP_FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 4
         private const val NO_AUDIO_UNPIN_THRESHOLD = 20
-        private const val ENFORCE_CALL_MUTE = true
+        private const val ENFORCE_CALL_MUTE = false
         private const val ENABLE_FOREGROUND_NOTIFICATION = false
         private const val SEND_GREETING_ON_CONNECT = true
         private const val ENABLE_LOCAL_TTS_FALLBACK = false
@@ -4490,7 +4490,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_ROLLING_PREBUFFER_MS = 1_200
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
-        private const val KEEP_CALL_MUTED_DURING_TTS = true
+        private const val KEEP_CALL_MUTED_DURING_TTS = false
         private const val FORCE_SPEAKER_ROUTE = false
         private const val MUTE_LOCAL_HANDSET_AUDIO = true
         private const val ROOT_TINYCAP_BIN = "/data/adb/service.d/phonebridge-tinycap"
