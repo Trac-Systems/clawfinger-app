@@ -3505,3 +3505,30 @@ _Last updated: 2026-02-19_
 1. Implement profile schema + loader in app runtime.
 2. Add default profile + fallback profile behavior.
 3. Add expert override file and validation UI path.
+
+## 2026-02-21 05:19 — Playback endpoint expansion + per-endpoint sample-rate overrides
+
+### What
+- Expanded playback candidate list to include additional telephony-relevant endpoints:
+  - `ROOT_PLAYBACK_DEVICE_CANDIDATES = [29, 23, 18, 19]`.
+- Added per-endpoint playback sample-rate overrides:
+  - `29 -> 32000`
+  - `23 -> 32000`
+  - default remains `48000` for others.
+- Refactored root playback path to normalize/re-encode WAV per selected device sample-rate before tinyplay.
+- Updated tinyplay launcher to pass the per-device rate instead of a single global fixed rate.
+- Added playback audit detail to include selected endpoint and rate:
+  - `voice_bridge:root_playback_device:<device>:r<rate>`.
+
+### Why
+- User confirmed remote audio was audible again but strongly high-pitched.
+- High pitch indicates sample-rate mismatch on the currently audible endpoint; a fixed global playback rate is insufficient when route drifts.
+- We need endpoint+rate pairing instead of endpoint-only selection.
+
+### Validation
+- `cd app-android && ./gradlew :app:assembleDebug` passed.
+- APK installed on `59191FDCH000YV`.
+
+### Next
+1. Live-call verify pitch on the currently audible endpoint with new per-endpoint rate map.
+2. If still off, add runtime endpoint-rate calibration pass and lock pair per call.
