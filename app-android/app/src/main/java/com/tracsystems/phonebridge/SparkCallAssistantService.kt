@@ -202,7 +202,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 startCaptureLoop(40)
             }
             Thread({
-                ensureRootCaptureCalibrated(reason = "service_start_post_route", force = true)
+                if (!speaking.get()) {
+                    ensureRootCaptureCalibrated(reason = "service_start_post_route", force = true)
+                } else {
+                    CommandAuditLog.add("voice_bridge:capture_calibration_skip:speaking:service_start_post_route")
+                }
                 ensureRootPlaybackCalibrated(reason = "service_start_post_route", force = true)
                 CommandAuditLog.add("root:route_post_calibration:done")
             }, "pb-root-route").start()
@@ -1804,6 +1808,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun ensureRootCaptureCalibrated(reason: String, force: Boolean) {
         if (!ENABLE_ROOT_PCM_BRIDGE || !ENABLE_ROOT_CAPTURE_AUTOCALIBRATION) {
+            return
+        }
+        if (speaking.get()) {
+            CommandAuditLog.add("voice_bridge:capture_calibration_skip:speaking:$reason")
             return
         }
         if (!InCallStateHolder.hasLiveCall()) {
@@ -4620,8 +4628,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             23 to 2,
         )
         private val ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = mapOf(
-            29 to 1.62,
-            23 to 1.62,
+            29 to 1.50,
+            23 to 1.50,
         )
         private val ROOT_BOOTSTRAP_COMMANDS = listOf(
             "echo /data/adb/ap/bin/su > /data/adb/ap/su_path",
