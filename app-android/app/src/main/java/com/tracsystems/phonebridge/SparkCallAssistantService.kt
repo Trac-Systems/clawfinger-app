@@ -770,6 +770,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (!InCallStateHolder.hasLiveCall()) {
             return false
         }
+        if (READY_BEEP_START_DELAY_MS > 0L) {
+            try {
+                Thread.sleep(READY_BEEP_START_DELAY_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+            if (!InCallStateHolder.hasLiveCall()) {
+                return false
+            }
+        }
         val now = System.currentTimeMillis()
         val last = lastReadyCueAtMs.get()
         if (now - last < READY_BEEP_MIN_INTERVAL_MS) {
@@ -4485,6 +4496,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val READY_BEEP_RELEASE_MS = 28
         private const val READY_BEEP_TAIL_GAP_MS = 28
         private const val READY_BEEP_EVERY_TURN = true
+        private const val READY_BEEP_START_DELAY_MS = 180L
         private const val READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS = 60L
         private const val ENABLE_EMBEDDED_READY_BEEP = false
         private const val CAPTURE_RETRY_DELAY_MS = 120L

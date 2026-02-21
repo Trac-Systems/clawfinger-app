@@ -3671,3 +3671,17 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:20 — Added explicit post-reply delay before standalone ready beep
+
+### What
+- Added `READY_BEEP_START_DELAY_MS = 180`.
+- `maybePlayReadyBeepCue(...)` now waits this delay (and rechecks live call) before triggering tinyplay for the beep.
+
+### Why
+- User reports missing beep after non-greeting turns.
+- Hypothesis: standalone beep starts too close to reply tail and gets perceptually masked/underlapped on call path.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
