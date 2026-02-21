@@ -4064,3 +4064,29 @@ _Last updated: 2026-02-19_
 
 ### Deployment
 - Rebuilt APK, reinstalled, pushed profile, forced app reload.
+
+## 2026-02-21 18:02 — Hardened profile loading to prevent default-path fallback (no greeting cases)
+
+### Symptom observed
+- Calls intermittently started with `runtime PCM profile not found; using defaults`.
+- In those calls, tuned playback/capture routing was skipped and greeting path became unreliable.
+
+### Root cause
+- Runtime profile resolution depended on a narrow path set and had no explicit search diagnostics.
+- Profile push flow only targeted external app storage, so internal fallback was unavailable if external lookup missed.
+
+### Fix implemented
+- Expanded runtime profile search in `SparkCallAssistantService`:
+  - app external dir (`getExternalFilesDir`),
+  - absolute `/sdcard/Android/data/<pkg>/files/profiles/...`,
+  - absolute `/storage/emulated/0/Android/data/<pkg>/files/profiles/...`,
+  - app internal `files/profiles/...`.
+- Added explicit diagnostics when profile search misses (`voice_bridge:profile:search_miss`).
+- Updated `scripts/android-push-profile.sh`:
+  - keeps external push,
+  - additionally attempts internal sync using `run-as <pkg>` to write `files/profiles/profile.json`,
+  - preserves external-only behavior if `run-as` is unavailable.
+
+### Why this is needed
+- Keeps tuned PCM profile available even when one storage path is transient/unavailable.
+- Reduces default-profile startups that lead to silent/no-greeting behavior.

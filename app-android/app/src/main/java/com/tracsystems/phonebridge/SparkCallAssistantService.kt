@@ -4826,25 +4826,39 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resolveRuntimeProfileFile(): File? {
+        val candidates = mutableListOf<File>()
+        fun addCandidate(file: File?) {
+            if (file == null) return
+            if (candidates.any { it.absolutePath == file.absolutePath }) return
+            candidates += file
+        }
+
+        val packageName = applicationContext.packageName
         val externalDir = getExternalFilesDir(null)
         if (externalDir != null) {
-            val externalPrimary = File(externalDir, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE")
-            if (externalPrimary.isFile) {
-                return externalPrimary
-            }
-            val externalLegacy = File(externalDir, "$PROFILE_DIR_NAME/$PROFILE_LEGACY_ACTIVE_FILE")
-            if (externalLegacy.isFile) {
-                return externalLegacy
-            }
+            addCandidate(File(externalDir, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE"))
+            addCandidate(File(externalDir, "$PROFILE_DIR_NAME/$PROFILE_LEGACY_ACTIVE_FILE"))
         }
-        val internalPrimary = File(filesDir, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE")
-        if (internalPrimary.isFile) {
-            return internalPrimary
+        addCandidate(File("/sdcard/Android/data/$packageName/files/$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE"))
+        addCandidate(File("/sdcard/Android/data/$packageName/files/$PROFILE_DIR_NAME/$PROFILE_LEGACY_ACTIVE_FILE"))
+        addCandidate(File("/storage/emulated/0/Android/data/$packageName/files/$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE"))
+        addCandidate(File("/storage/emulated/0/Android/data/$packageName/files/$PROFILE_DIR_NAME/$PROFILE_LEGACY_ACTIVE_FILE"))
+        addCandidate(File(filesDir, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE"))
+        addCandidate(File(filesDir, "$PROFILE_DIR_NAME/$PROFILE_LEGACY_ACTIVE_FILE"))
+
+        val readable = candidates.firstOrNull { it.isFile && it.canRead() }
+        if (readable != null) {
+            return readable
         }
-        val internalLegacy = File(filesDir, "$PROFILE_DIR_NAME/$PROFILE_LEGACY_ACTIVE_FILE")
-        if (internalLegacy.isFile) {
-            return internalLegacy
+
+        val presentButNotReadable = candidates.firstOrNull { it.isFile }
+        if (presentButNotReadable != null) {
+            return presentButNotReadable
         }
+
+        val checked = candidates.joinToString(separator = ";") { it.absolutePath }.take(420)
+        CommandAuditLog.add("voice_bridge:profile:search_miss:$checked")
+        Log.w(TAG, "runtime PCM profile search miss; checked=$checked")
         return null
     }
 
