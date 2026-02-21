@@ -4106,3 +4106,18 @@ _Last updated: 2026-02-19_
 ### Why
 - If `playedMs << expectedMs`, issue is render/format path.
 - If `playedMs ~= expectedMs` but remote hears nothing, issue is route-to-remote leg, not LLM or local synthesis.
+
+## 2026-02-21 18:27 — Fixed false-positive playback success on instant tinyplay exit
+
+### Root cause identified (deterministic)
+- Logs showed `root tinyplay ok ... playedMs=0 expectedMs=5835`.
+- That means tinyplay process exited almost immediately, but app marked playback as success.
+- Result: no audible greeting while pipeline falsely advanced to capture loop.
+
+### Fix
+- Added early-exit guard in `monitorRootPlayback(...)`:
+  - if `expectedMs >= 900` and `playedMs < 180`, treat as playback failure (`played=false`) instead of success.
+- This allows fallback to next playback candidate instead of accepting silent/blip exits.
+
+### Why
+- Removes false-positive success path that was masking real audibility failure and causing no-greeting behavior.

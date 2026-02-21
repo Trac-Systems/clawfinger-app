@@ -2689,6 +2689,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             if (!isRootProcessAlive(pid)) {
                 val elapsedMs = (now - startedAt).coerceAtLeast(0L)
+                val expectedForGuard = expectedDurationMs.coerceAtLeast(0L)
+                if (expectedForGuard >= ROOT_PLAYBACK_EARLY_EXIT_GUARD_MIN_EXPECTED_MS && elapsedMs < ROOT_PLAYBACK_EARLY_EXIT_MIN_SUCCESS_MS) {
+                    Log.w(
+                        TAG,
+                        "root tinyplay exited too early device=$device playedMs=$elapsedMs expectedMs=$expectedDurationMs",
+                    )
+                    CommandAuditLog.add("voice_bridge:root_playback_early_exit:d$device:ms=$elapsedMs:exp=$expectedDurationMs")
+                    return RootPlaybackResult(played = false, interrupted = false)
+                }
                 Log.i(TAG, "root tinyplay ok device=$device playedMs=$elapsedMs expectedMs=$expectedDurationMs")
                 CommandAuditLog.add("voice_bridge:root_playback_ok:d$device:ms=$elapsedMs:exp=$expectedDurationMs")
                 markSpeechActivity("root_playback:$device")
@@ -5528,6 +5537,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL = true
         private const val ROOT_PLAYBACK_RETRY_ON_TIMEOUT = false
         private const val ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED = true
+        private const val ROOT_PLAYBACK_EARLY_EXIT_MIN_SUCCESS_MS = 180L
+        private const val ROOT_PLAYBACK_EARLY_EXIT_GUARD_MIN_EXPECTED_MS = 900L
         private const val PLAYBACK_STUCK_GRACE_MS = 350L
         private const val ENABLE_POST_PLAYBACK_CAPTURE_PREARM = true
         private const val POST_PLAYBACK_PREARM_WINDOW_MS = 900L
