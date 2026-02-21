@@ -1156,6 +1156,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (speechOffset <= 0) {
             return pcm
         }
+        val minOffsetBytes = max(0, ((sampleRate * UTTERANCE_LEADING_TRIM_MIN_OFFSET_MS) / 1000) * 2)
+        if (speechOffset < minOffsetBytes) {
+            return pcm
+        }
         val guardBytes = max(0, ((sampleRate * UTTERANCE_LEADING_TRIM_GUARD_MS) / 1000) * 2)
         val trimStart = max(0, speechOffset - guardBytes)
         if (trimStart <= 0 || trimStart >= pcm.size - 2) {
@@ -5741,7 +5745,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 2200
         private const val UTTERANCE_LEADING_TRIM_FRAME_MS = 20
         private const val UTTERANCE_LEADING_TRIM_MAX_MS = 1_500
-        private const val UTTERANCE_LEADING_TRIM_GUARD_MS = 180
+        private const val UTTERANCE_LEADING_TRIM_MIN_OFFSET_MS = 320
+        private const val UTTERANCE_LEADING_TRIM_GUARD_MS = 260
         private const val UTTERANCE_VAD_RMS = 45.0
         private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
         private const val UTTERANCE_VAD_RMS_FALLBACK = 70.0
