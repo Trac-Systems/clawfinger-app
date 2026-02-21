@@ -12,6 +12,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 coverage/
+package.json
+package-lock.json
 
 # Build artifacts
 build/
