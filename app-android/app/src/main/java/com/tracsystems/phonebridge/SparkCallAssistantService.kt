@@ -4620,8 +4620,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             23 to 2,
         )
         private val ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = mapOf(
-            29 to 1.33,
-            23 to 1.33,
+            29 to 1.50,
+            23 to 1.50,
         )
         private val ROOT_BOOTSTRAP_COMMANDS = listOf(
             "echo /data/adb/ap/bin/su > /data/adb/ap/su_path",
