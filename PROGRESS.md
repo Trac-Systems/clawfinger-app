@@ -4233,3 +4233,26 @@ _Last updated: 2026-02-19_
 ### Deploy
 - Profile pushed to device as `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`.
 - Internal app profile sync attempted via `run-as`, then app force-stopped so next call reloads profile.
+
+## 2026-02-21 19:33 — Latest call pull and endpoint verification
+
+### Evidence pulled
+- Latest call bundle: `phone/debug-wavs/latest-call-20260221-193345`.
+- Files:
+  - `rxm-1771698596743-vad-10.wav`
+  - `rxm-1771698637798-vad-13.wav`
+  - `tx-1771698597513-we-need-to-get-ready..wav`
+  - `tx-1771698638463-we-can-make-a-good-movie..wav`
+
+### Observations
+- RX wavs are 48kHz mono and transcribe as:
+  - “We need to get ready.”
+  - “We can make a good movie.”
+- Log shows profile loaded with capture candidates `[20, 21]` and first pin on `incall_cap_0(20)`.
+- Post-disconnect fallback probes still show `no_audio_source` (expected after call teardown, not active-call quality proof).
+
+### Runbook alignment
+- Added profile-first PCM training loop to `VOICE-BRIDGE-SKILL.md`:
+  - keep baseline endpoint,
+  - add newly activated endpoint as secondary,
+  - tune only via profile edits + retest with human pickup.
