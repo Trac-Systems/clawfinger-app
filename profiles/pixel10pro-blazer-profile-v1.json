@@ -42,14 +42,14 @@
   "playback": {
     "validated_primary": {
       "device": 29,
-      "sample_rate": 24000,
-      "channels": 1,
+      "sample_rate": 48000,
+      "channels": 2,
       "bits": 16,
-      "speed_compensation": 1.0,
+      "speed_compensation": 1.5,
       "period_size": 2048,
       "period_count": 16,
       "mmap": false,
-      "notes": "Retuned to reduce short high-pitch blip behavior on greeting playback"
+      "notes": "Validated as audible/usable on remote call path in this profile"
     },
     "tuning": {
       "persistent_session": false,
