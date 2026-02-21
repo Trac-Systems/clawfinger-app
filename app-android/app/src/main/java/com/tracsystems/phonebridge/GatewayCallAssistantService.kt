@@ -440,8 +440,13 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     val utterance = captureUtteranceStateMachine()
                     if (utterance == null) {
                         lastRejectionReason = "utterance_empty"
-                        stopRootCaptureStreamSession("state_machine_empty_fallback")
-                        Log.w(TAG, "state-machine utterance empty; falling back to capture probes (strictStream=$strictStreamOnly)")
+                        if (!strictStreamOnly) {
+                            stopRootCaptureStreamSession("state_machine_empty_fallback")
+                            Log.w(TAG, "state-machine utterance empty; falling back to capture probes (strictStream=$strictStreamOnly)")
+                        } else {
+                            CommandAuditLog.add("voice_bridge:state_machine_empty_retry_strict")
+                            Log.w(TAG, "state-machine utterance empty; strict stream retry")
+                        }
                     } else {
                         transcriptPreview = utterance.transcript
                         transcriptAudioWav = utterance.audioWav
@@ -455,6 +460,11 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
                 } else if (!strictStreamOnly) {
                     CommandAuditLog.add("voice_bridge:first_turn_force_fallback")
+                }
+                if (strictStreamOnly && useStateMachine && transcriptPreview.isBlank() && transcriptAudioWav == null) {
+                    speaking.set(false)
+                    startCaptureLoop(NO_AUDIO_RETRY_DELAY_MS)
+                    return@execute
                 }
                 if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
                     repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
@@ -5672,8 +5682,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_PRE_ROLL_MS = 1_200
         private const val UTTERANCE_MIN_SPEECH_MS = 180
         private const val UTTERANCE_SILENCE_MS = 520
-        private const val FAST_POST_PLAYBACK_SILENCE_MS = 340
-        private const val FAST_POST_PLAYBACK_WINDOW_MS = 3_000L
+        private const val FAST_POST_PLAYBACK_SILENCE_MS = 520
+        private const val FAST_POST_PLAYBACK_WINDOW_MS = 1_200L
         private const val FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD = 2
         private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 4
         private const val UTTERANCE_MAX_TURN_MS = 8_000
