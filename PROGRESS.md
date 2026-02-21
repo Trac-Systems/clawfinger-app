@@ -3639,3 +3639,19 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:13 — Moved readiness beep into reply audio tail to prevent missed per-turn beep
+
+### What
+- Added embedded readiness beep mode (`ENABLE_EMBEDDED_READY_BEEP = true`).
+- App now appends beep tone directly to each assistant reply WAV before root playback (`appendReadyBeepTailToWav`).
+- Greeting/reply playback calls now set `appendReadyBeepTail = true`.
+- When embedded beep is on, `startCaptureLoopWithReadyCue(...)` no longer fires a second standalone beep playback.
+
+### Why
+- Logs showed missing per-turn beep due second tinyplay beep launch failing on route/call transitions.
+- Embedding beep into the same playback stream removes that second launch failure mode.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.

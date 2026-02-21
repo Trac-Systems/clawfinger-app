@@ -325,6 +325,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     audioWavBase64 = response?.audioWavBase64,
                     replyTextForEcho = reply,
                     enableBargeInInterrupt = false,
+                    appendReadyBeepTail = ENABLE_EMBEDDED_READY_BEEP,
                 )
             } else {
                 RootPlaybackResult(played = false, interrupted = false)
@@ -669,6 +670,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     playReplyViaRootPcm(
                         audioWavBase64 = response?.audioWavBase64,
                         replyTextForEcho = cleanReply,
+                        appendReadyBeepTail = ENABLE_EMBEDDED_READY_BEEP,
                     )
                 } else {
                     RootPlaybackResult(played = false, interrupted = false)
@@ -736,6 +738,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startCaptureLoopWithReadyCue(delayMs: Long, reason: String) {
+        if (ENABLE_EMBEDDED_READY_BEEP) {
+            startCaptureLoop(delayMs)
+            return
+        }
         if (!ENABLE_READY_BEEP_CUE || !ENABLE_ROOT_PCM_BRIDGE) {
             startCaptureLoop(delayMs)
             return
@@ -2042,15 +2048,21 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         audioWavBase64: String?,
         replyTextForEcho: String? = null,
         enableBargeInInterrupt: Boolean = ENABLE_BARGE_IN_INTERRUPT,
+        appendReadyBeepTail: Boolean = false,
     ): RootPlaybackResult {
         if (audioWavBase64.isNullOrBlank()) {
             return RootPlaybackResult(played = false, interrupted = false)
         }
-        val wavBytes = runCatching {
+        val rawWavBytes = runCatching {
             Base64.getDecoder().decode(audioWavBase64.trim())
         }.getOrNull() ?: return RootPlaybackResult(played = false, interrupted = false)
-        if (wavBytes.size < 44) {
+        if (rawWavBytes.size < 44) {
             return RootPlaybackResult(played = false, interrupted = false)
+        }
+        val wavBytes = if (appendReadyBeepTail) {
+            appendReadyBeepTailToWav(rawWavBytes) ?: rawWavBytes
+        } else {
+            rawWavBytes
         }
         val normalizedByFormat = mutableMapOf<Triple<Int, Int, Int>, Pair<ByteArray, Long>>()
         ensureRootPlaybackCalibrated(reason = "reply_playback", force = false)
@@ -2143,6 +2155,40 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         rootPlaybackCalibratedForCall = false
         return RootPlaybackResult(played = false, interrupted = false)
+    }
+
+    private fun appendReadyBeepTailToWav(wavBytes: ByteArray): ByteArray? {
+        val decoded = decodeWavToPcm16Mono(wavBytes) ?: return null
+        val sampleRate = decoded.sampleRate.takeIf { it > 0 } ?: ROOT_PLAYBACK_SAMPLE_RATE
+        val beepFrames = ((sampleRate * READY_BEEP_DURATION_MS) / 1000).coerceAtLeast(8)
+        val gapFrames = ((sampleRate * READY_BEEP_TAIL_GAP_MS) / 1000).coerceAtLeast(0)
+        val beepPcm = ByteArray(beepFrames * 2)
+        val twoPiF = (2.0 * Math.PI * READY_BEEP_FREQUENCY_HZ.toDouble()) / sampleRate.toDouble()
+        var frame = 0
+        while (frame < beepFrames) {
+            val attackFrames = ((sampleRate * READY_BEEP_ATTACK_MS) / 1000).coerceAtLeast(1)
+            val releaseFrames = ((sampleRate * READY_BEEP_RELEASE_MS) / 1000).coerceAtLeast(1)
+            val envelope = when {
+                frame < attackFrames -> frame.toDouble() / attackFrames.toDouble()
+                frame >= beepFrames - releaseFrames -> {
+                    (beepFrames - frame).toDouble() / releaseFrames.toDouble()
+                }
+                else -> 1.0
+            }.coerceIn(0.0, 1.0)
+            val sample = (sin(twoPiF * frame.toDouble()) * envelope * READY_BEEP_AMPLITUDE * Short.MAX_VALUE.toDouble())
+                .toInt()
+                .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            val offset = frame * 2
+            beepPcm[offset] = (sample and 0xff).toByte()
+            beepPcm[offset + 1] = ((sample shr 8) and 0xff).toByte()
+            frame += 1
+        }
+        val gap = ByteArray(gapFrames * 2)
+        val combined = ByteArray(decoded.pcm.size + gap.size + beepPcm.size)
+        System.arraycopy(decoded.pcm, 0, combined, 0, decoded.pcm.size)
+        System.arraycopy(gap, 0, combined, decoded.pcm.size, gap.size)
+        System.arraycopy(beepPcm, 0, combined, decoded.pcm.size + gap.size, beepPcm.size)
+        return pcm16ToWav(combined, sampleRate, channels = 1)
     }
 
     private fun startRootTinyplayProcess(
@@ -4437,8 +4483,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val READY_BEEP_AMPLITUDE = 0.30
         private const val READY_BEEP_ATTACK_MS = 12
         private const val READY_BEEP_RELEASE_MS = 28
+        private const val READY_BEEP_TAIL_GAP_MS = 28
         private const val READY_BEEP_EVERY_TURN = true
         private const val READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS = 60L
+        private const val ENABLE_EMBEDDED_READY_BEEP = true
         private const val CAPTURE_RETRY_DELAY_MS = 120L
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
         private const val NO_AUDIO_RETRY_DELAY_MS = 450L
