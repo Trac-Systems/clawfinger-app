@@ -3756,3 +3756,30 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:57 — Added runtime JSON PCM profile loading (Pixel 10 Pro profile v1)
+
+### What
+- Added runtime profile loader in `SparkCallAssistantService`:
+  - reads JSON from:
+    - external: `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/active-profile.json`
+    - fallback internal: `files/profiles/active-profile.json`
+  - applies profile-driven overrides for:
+    - playback candidates/order
+    - playback sample-rate/channel/speed overrides
+    - capture candidates/order
+  - resets to built-in defaults if profile missing/invalid.
+- Added profile parser + data model (`RuntimePcmProfile`).
+- Added first profile files:
+  - `profiles/pixel10pro-blazer-profile-v1.json`
+  - `profiles/active-profile.json` (current active copy)
+- Added helper script:
+  - `scripts/android-push-profile.sh` to push profile to device + force-stop app for reload.
+
+### Why
+- Requirement: app must be able to load JSON profile and run from profile values.
+- Needed to start a maintainable per-device profile system instead of hardcoding every endpoint decision.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- `scripts/android-push-profile.sh` passed; profile was pushed to device path.

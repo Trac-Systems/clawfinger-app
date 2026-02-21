@@ -25,6 +25,7 @@ import com.konovalov.vad.webrtc.VadWebRTC
 import com.konovalov.vad.webrtc.config.FrameSize as VadFrameSize
 import com.konovalov.vad.webrtc.config.Mode as VadMode
 import com.konovalov.vad.webrtc.config.SampleRate as VadSampleRate
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
@@ -165,6 +166,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
             CommandAuditLog.add("voice_bridge:start")
+            loadRuntimePcmProfile()
             speaking.set(false)
             sessionId = null
             selectedAudioSource = null
@@ -4331,6 +4333,131 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
     }
 
+    private fun loadRuntimePcmProfile() {
+        resetRuntimePcmProfileToDefaults()
+        if (!ENABLE_PROFILE_JSON_LOADING) {
+            return
+        }
+        val profileFile = resolveRuntimeProfileFile() ?: return
+        runCatching {
+            val jsonText = profileFile.readText()
+            parseRuntimePcmProfile(jsonText)
+        }.onSuccess { profile ->
+            if (profile == null) {
+                CommandAuditLog.add("voice_bridge:profile:parse_none:${profileFile.absolutePath}")
+                return@onSuccess
+            }
+            ROOT_CAPTURE_CANDIDATES = profile.captureCandidates
+            ROOT_PLAYBACK_DEVICE_CANDIDATES = profile.playbackCandidates
+            ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = profile.playbackRateOverrides
+            ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = profile.playbackChannelOverrides
+            ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = profile.playbackSpeedOverrides
+            selectedRootPlaybackDevice = null
+            rootPlaybackCalibratedForCall = false
+            CommandAuditLog.add(
+                "voice_bridge:profile:loaded:${profile.profileId ?: "unnamed"}:pb=${ROOT_PLAYBACK_DEVICE_CANDIDATES.joinToString(",")}:cap=${ROOT_CAPTURE_CANDIDATES.joinToString(",") { it.device.toString() }}",
+            )
+            Log.i(
+                TAG,
+                "runtime PCM profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }})",
+            )
+        }.onFailure { error ->
+            CommandAuditLog.add("voice_bridge:profile:load_error:${error.message?.take(80)}")
+            Log.w(TAG, "runtime PCM profile load failed from ${profileFile.absolutePath}", error)
+        }
+    }
+
+    private fun resolveRuntimeProfileFile(): File? {
+        val external = getExternalFilesDir(null)?.let { File(it, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE") }
+        if (external != null && external.isFile) {
+            return external
+        }
+        val internal = File(filesDir, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE")
+        if (internal.isFile) {
+            return internal
+        }
+        return null
+    }
+
+    private fun resetRuntimePcmProfileToDefaults() {
+        ROOT_CAPTURE_CANDIDATES = ROOT_CAPTURE_CANDIDATES_DEFAULT
+        ROOT_PLAYBACK_DEVICE_CANDIDATES = ROOT_PLAYBACK_DEVICE_CANDIDATES_DEFAULT
+        ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES_DEFAULT
+        ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES_DEFAULT
+        ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT
+    }
+
+    private fun parseRuntimePcmProfile(jsonText: String): RuntimePcmProfile? {
+        val root = runCatching { JSONObject(jsonText) }.getOrNull() ?: return null
+        val profileId = root.optString("profile_id").ifBlank { null }
+
+        val playbackRoot = root.optJSONObject("playback")
+        val playbackCandidates = parseIntArray(playbackRoot?.optJSONArray("candidate_order_in_app"))
+            .ifEmpty {
+                val validatedPrimary = playbackRoot?.optJSONObject("validated_primary")
+                val validatedDevice = validatedPrimary?.optInt("device", -1) ?: -1
+                if (validatedDevice > 0) listOf(validatedDevice) else ROOT_PLAYBACK_DEVICE_CANDIDATES_DEFAULT
+            }
+            .distinct()
+
+        val playbackRates = ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES_DEFAULT.toMutableMap()
+        val playbackChannels = ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES_DEFAULT.toMutableMap()
+        val playbackSpeeds = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT.toMutableMap()
+        playbackRoot?.optJSONObject("validated_primary")?.let { primary ->
+            val device = primary.optInt("device", -1)
+            if (device > 0) {
+                primary.optInt("sample_rate", -1).takeIf { it > 0 }?.let { playbackRates[device] = it }
+                primary.optInt("channels", -1).takeIf { it > 0 }?.let { playbackChannels[device] = it }
+                primary.optDouble("speed_compensation", Double.NaN)
+                    .takeIf { it.isFinite() && it > 0.0 }
+                    ?.let { playbackSpeeds[device] = it }
+            }
+        }
+
+        val captureRoot = root.optJSONObject("capture")
+        val captureDevices = parseIntArray(captureRoot?.optJSONArray("candidate_order_in_app"))
+            .ifEmpty {
+                val validatedPrimary = captureRoot?.optJSONObject("validated_primary")
+                val validatedDevice = validatedPrimary?.optInt("device", -1) ?: -1
+                if (validatedDevice > 0) listOf(validatedDevice) else ROOT_CAPTURE_CANDIDATES_DEFAULT.map { it.device }
+            }
+            .distinct()
+        val captureCandidates = captureDevices.map { device ->
+            val known = ROOT_CAPTURE_CANDIDATES_DEFAULT.firstOrNull { it.device == device }
+            RootCaptureCandidate(
+                device = device,
+                name = known?.name ?: "capture_$device",
+            )
+        }
+
+        if (playbackCandidates.isEmpty() || captureCandidates.isEmpty()) {
+            return null
+        }
+
+        return RuntimePcmProfile(
+            profileId = profileId,
+            playbackCandidates = playbackCandidates,
+            playbackRateOverrides = playbackRates,
+            playbackChannelOverrides = playbackChannels,
+            playbackSpeedOverrides = playbackSpeeds,
+            captureCandidates = captureCandidates,
+        )
+    }
+
+    private fun parseIntArray(array: JSONArray?): List<Int> {
+        if (array == null || array.length() <= 0) {
+            return emptyList()
+        }
+        val values = ArrayList<Int>(array.length())
+        for (index in 0 until array.length()) {
+            val value = array.optInt(index, -1)
+            if (value > 0) {
+                values += value
+            }
+        }
+        return values
+    }
+
     private object SparkConfig {
         const val baseUrl = "http://192.168.178.30:8996"
         const val bearer = "41154c137d0225c8a8d1abc6f659a39811e6a40fd3851bce40da2604ae37ddf3"
@@ -4344,6 +4471,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private data class RootCaptureCandidate(
         val device: Int,
         val name: String,
+    )
+
+    private data class RuntimePcmProfile(
+        val profileId: String?,
+        val playbackCandidates: List<Int>,
+        val playbackRateOverrides: Map<Int, Int>,
+        val playbackChannelOverrides: Map<Int, Int>,
+        val playbackSpeedOverrides: Map<Int, Double>,
+        val captureCandidates: List<RootCaptureCandidate>,
     )
 
     private data class RootCaptureFrame(
@@ -4533,6 +4669,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val PROBE_CAPTURE_MS = 480
         private const val ENABLE_ROOT_BOOTSTRAP = true
         private const val ENABLE_ROOT_PCM_BRIDGE = true
+        private const val ENABLE_PROFILE_JSON_LOADING = true
+        private const val PROFILE_DIR_NAME = "profiles"
+        private const val PROFILE_ACTIVE_FILE = "active-profile.json"
         private const val ENABLE_ROOT_CAPTURE_AUTOCALIBRATION = true
         private const val ENABLE_ROOT_PLAYBACK_AUTOCALIBRATION = false
         private const val ENABLE_ROOT_CALL_ROUTE_PROFILE = true
@@ -4705,25 +4844,30 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             AudioSourceCandidate(id = MediaRecorder.AudioSource.VOICE_RECOGNITION, name = "voice_recognition"),
             AudioSourceCandidate(id = MediaRecorder.AudioSource.MIC, name = "mic"),
         )
-        private val ROOT_CAPTURE_CANDIDATES = listOf(
+        private val ROOT_CAPTURE_CANDIDATES_DEFAULT = listOf(
             RootCaptureCandidate(device = 20, name = "incall_cap_0"),
             RootCaptureCandidate(device = 21, name = "incall_cap_1"),
             RootCaptureCandidate(device = 22, name = "incall_cap_2"),
             RootCaptureCandidate(device = 54, name = "incall_cap_3"),
         )
-        private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(29, 23, 18, 19)
-        private val ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = mapOf(
+        private var ROOT_CAPTURE_CANDIDATES = ROOT_CAPTURE_CANDIDATES_DEFAULT
+        private val ROOT_PLAYBACK_DEVICE_CANDIDATES_DEFAULT = listOf(29, 23, 18, 19)
+        private var ROOT_PLAYBACK_DEVICE_CANDIDATES = ROOT_PLAYBACK_DEVICE_CANDIDATES_DEFAULT
+        private val ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES_DEFAULT = mapOf(
             29 to 48_000,
             23 to 48_000,
         )
-        private val ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = mapOf(
+        private var ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES_DEFAULT
+        private val ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES_DEFAULT = mapOf(
             29 to 2,
             23 to 2,
         )
-        private val ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = mapOf(
+        private var ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES_DEFAULT
+        private val ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT = mapOf(
             29 to 1.50,
             23 to 1.50,
         )
+        private var ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT
         private val ROOT_BOOTSTRAP_COMMANDS = listOf(
             "echo /data/adb/ap/bin/su > /data/adb/ap/su_path",
             "pm grant com.tracsystems.phonebridge android.permission.CALL_PHONE",
