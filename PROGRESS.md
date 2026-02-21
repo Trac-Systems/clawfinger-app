@@ -4158,3 +4158,20 @@ _Last updated: 2026-02-19_
 
 ### Intent
 - Keep greeting audibility while reducing choppy playback artifacts.
+
+## 2026-02-21 18:42 — Fixed fallback capture silencing by running voice service as foreground microphone service
+
+### Root cause found
+- Logcat repeatedly showed: `App op 27 missing, silencing record` for `com.tracsystems.phonebridge`.
+- Runtime permission `RECORD_AUDIO` was granted, but AppOps mode is `foreground`.
+- Service had foreground notification disabled, so fallback `AudioRecord` probes could be system-silenced in background state.
+
+### Fix
+- Enabled foreground notification in `SparkCallAssistantService`.
+- Updated `startForeground(...)` to use explicit FGS types on Android Q+:
+  - `FOREGROUND_SERVICE_TYPE_PHONE_CALL`
+  - `FOREGROUND_SERVICE_TYPE_MICROPHONE`
+
+### Expected impact
+- Prevents fallback capture path from being muted by AppOps foreground gating.
+- Improves turn understanding reliability when root capture path temporarily falls back.
