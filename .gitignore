@@ -5,6 +5,10 @@ Thumbs.db
 .vscode/
 *.iml
 
+# Never publish planning/progress logs
+PLAN.md
+PROGRESS.md
+
 # Node
 node_modules/
 npm-debug.log*
