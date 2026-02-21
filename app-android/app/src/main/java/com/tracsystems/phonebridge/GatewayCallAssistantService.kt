@@ -45,7 +45,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -211,7 +210,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260221-stream-capture-trim-a")
+            Log.i(TAG, "build marker: 20260221-capture-preroll-safe-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             speaking.set(false)
@@ -929,12 +928,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         var sampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
         val fastEndpointMode = System.currentTimeMillis() - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
         val updateDerivedThresholds = {
-            val preRollMs = if (fastEndpointMode) {
-                UTTERANCE_FAST_PRE_ROLL_MS
-            } else {
-                UTTERANCE_PRE_ROLL_MS
-            }
-            val preRollMaxBytes = ((sampleRate * preRollMs) / 1000) * 2
+            val preRollMaxBytes = ((sampleRate * UTTERANCE_PRE_ROLL_MS) / 1000) * 2
             val minSpeechSamples = (sampleRate * UTTERANCE_MIN_SPEECH_MS) / 1000
             val silenceMs = if (fastEndpointMode) FAST_POST_PLAYBACK_SILENCE_MS else UTTERANCE_SILENCE_MS
             val silenceSamplesLimit = (sampleRate * silenceMs) / 1000
@@ -1070,9 +1064,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } else {
             utterancePcm
         }
-        val normalizedPcm = trimLeadingPreSpeechNoise(cappedPcm, sampleRate)
-        val adaptiveAsr = transcribeUtteranceAdaptive(normalizedPcm, sampleRate)
-        val utteranceWav = adaptiveAsr?.wav ?: pcm16ToWav(normalizedPcm, sampleRate)
+        val adaptiveAsr = transcribeUtteranceAdaptive(cappedPcm, sampleRate)
+        val utteranceWav = adaptiveAsr?.wav ?: pcm16ToWav(cappedPcm, sampleRate)
         val transcript = adaptiveAsr?.transcript.orEmpty()
         clearRootRollingPrebuffer()
         if (runtimeDebugWavDumpEnabled) {
@@ -1120,52 +1113,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } else {
             merged
         }
-    }
-
-    private fun trimLeadingPreSpeechNoise(pcm: ByteArray, sampleRate: Int): ByteArray {
-        if (pcm.size < 4 || sampleRate <= 0) {
-            return pcm
-        }
-        val frameSamples = max(1, (sampleRate * UTTERANCE_LEADING_TRIM_FRAME_MS) / 1000)
-        val frameBytes = frameSamples * 2
-        if (frameBytes < 2 || pcm.size < frameBytes) {
-            return pcm
-        }
-        val maxTrimBytes = max(0, ((sampleRate * UTTERANCE_LEADING_TRIM_MAX_MS) / 1000) * 2)
-        if (maxTrimBytes <= 0) {
-            return pcm
-        }
-        val scanLimit = min(maxTrimBytes, pcm.size - frameBytes)
-        var offset = 0
-        var speechOffset = -1
-        while (offset <= scanLimit) {
-            val end = min(offset + frameBytes, pcm.size)
-            val frame = pcm.copyOfRange(offset, end)
-            val rms = rmsPcm16(frame)
-            val voiced = if (ENABLE_WEBRTC_VAD_TURN_DETECT) {
-                isSpeechChunkByVad(frame, sampleRate) || rms >= UTTERANCE_VAD_RMS_FALLBACK
-            } else {
-                rms >= UTTERANCE_VAD_RMS
-            }
-            if (voiced) {
-                speechOffset = offset
-                break
-            }
-            offset += frameBytes
-        }
-        if (speechOffset <= 0) {
-            return pcm
-        }
-        val minOffsetBytes = max(0, ((sampleRate * UTTERANCE_LEADING_TRIM_MIN_OFFSET_MS) / 1000) * 2)
-        if (speechOffset < minOffsetBytes) {
-            return pcm
-        }
-        val guardBytes = max(0, ((sampleRate * UTTERANCE_LEADING_TRIM_GUARD_MS) / 1000) * 2)
-        val trimStart = max(0, speechOffset - guardBytes)
-        if (trimStart <= 0 || trimStart >= pcm.size - 2) {
-            return pcm
-        }
-        return pcm.copyOfRange(trimStart, pcm.size)
     }
 
     private fun shouldCollectContinuation(transcript: String): Boolean {
@@ -5733,7 +5680,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_STRICT_STREAM_ONLY = true
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 80
         private const val UTTERANCE_PRE_ROLL_MS = 1_200
-        private const val UTTERANCE_FAST_PRE_ROLL_MS = 420
         private const val UTTERANCE_MIN_SPEECH_MS = 180
         private const val UTTERANCE_SILENCE_MS = 520
         private const val FAST_POST_PLAYBACK_SILENCE_MS = 520
@@ -5743,10 +5689,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_MAX_TURN_MS = 8_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
         private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 2200
-        private const val UTTERANCE_LEADING_TRIM_FRAME_MS = 20
-        private const val UTTERANCE_LEADING_TRIM_MAX_MS = 1_500
-        private const val UTTERANCE_LEADING_TRIM_MIN_OFFSET_MS = 320
-        private const val UTTERANCE_LEADING_TRIM_GUARD_MS = 260
         private const val UTTERANCE_VAD_RMS = 45.0
         private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
         private const val UTTERANCE_VAD_RMS_FALLBACK = 70.0
