@@ -4332,3 +4332,33 @@ _Last updated: 2026-02-19_
   - capture overrides present only for `20/21` (expected), stubs for `22/54` defaulting.
 - Latest observed active capture endpoint from log calibration: `22` (`incall_cap_2`).
 - No active call at check time, so no currently active playback endpoint to report.
+
+## 2026-02-21 20:14 — Greeting path failure root cause + deterministic fix
+
+### Root cause (confirmed)
+- The previous install was done in parallel with build; device ended up running an older APK containing pre-greeting blocking capture calibration.
+- That old path blocked greeting for ~10s+ while probing all capture candidates, and the call often disconnected before playback.
+
+### Fix
+- Removed blocking pre-greeting capture calibration call from service start path.
+- Kept route apply + greeting request path immediate.
+- Rebuilt and installed sequentially (build -> install -> push profile), then verified installed APK no longer contains `service_start_pre_greeting`.
+
+### Validation
+- Fresh call logs show greeting playback now starts quickly:
+  - playback launch on `device=29` within ~2s after route set.
+  - `root tinyplay ok device=29`.
+- During same call, capture pinned to:
+  - `incall_cap_0 (device=20)`.
+- Active endpoint evidence in that successful run:
+  - playback: `29`
+  - capture: `20`.
+
+## 2026-02-21 20:17 — Skill update: capture training loop policy clarified
+
+### Update applied
+- `VOICE-BRIDGE-SKILL.md` now explicitly defines current capture training operation:
+  - run capture training loop only when active capture endpoint is not `20`,
+  - each loop must pull WAV artifacts + transcriptions,
+  - human listens to pulled `rxm-*` files and reports pitch status (`normal/high/low`) with filenames,
+  - AI tunes only `capture.endpoint_settings.<pcm_index>`, pushes profile, and repeats until corrected.

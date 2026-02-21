@@ -66,6 +66,24 @@ Use this when modem/call session shifts to another PCM endpoint.
 5. Push updated profile and retest.
 6. Repeat until quality and transcription are stable.
 
+### Capture training loop (current operating method)
+- Gate condition:
+  - If active capture endpoint is `20`, do not run capture training.
+  - Run capture training only when active capture endpoint is not `20`.
+- Mandatory artifacts each loop:
+  - pull call WAVs (`rxm-*`, `rx-*`, `tx-*`) to local `phone/debug-wavs/latest-call-*`
+  - pull transcription outputs for the same call.
+- Human QA step (required):
+  - listen to the pulled `rxm-*` files,
+  - classify pitch quality (`normal`, `too high/fast`, `too low/slow`),
+  - report this back to AI with the exact filenames.
+- AI tuning step:
+  - adjust only the active capture endpoint settings in `capture.endpoint_settings.<pcm_index>`,
+  - push profile, retest, pull artifacts again.
+- Stop condition:
+  - keep iterating until human confirms natural pitch and transcript alignment on the pulled files.
+- This is the exact process currently used for capture tuning.
+
 ## Acceptance criteria
 - Greeting audible to remote caller.
 - Minimum 3 stable turns without losing capture.
