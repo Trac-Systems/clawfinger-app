@@ -55,3 +55,22 @@ profiles/*.local.json
 *.crt
 *.cer
 *.mobileprovision
+
+# Keep repository focused on Clawfinger Android build + profiles
+agent-gateway/
+bridge-spark/
+control-panel/
+docs/
+native/
+node-control/
+tests/
+
+# Keep only core Android helper scripts tracked
+scripts/*
+!scripts/android-build-debug.sh
+!scripts/android-install-debug.sh
+!scripts/android-push-profile.sh
+
+# App test sources are optional for build artifact creation
+app-android/app/src/test/
+app-android/app/src/androidTest/
