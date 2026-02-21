@@ -4365,3 +4365,14 @@ _Last updated: 2026-02-19_
   - human listens to pulled `rxm-*` files and reports pitch status (`normal/high/low`) with filenames,
   - AI tunes only `capture.endpoint_settings.<pcm_index>`, pushes profile, and repeats until corrected.
   - precondition added: `logging.debug_wav_dump.enabled=true` must be set in profile and the profile must be pushed/loaded before loop execution.
+
+## 2026-02-21 20:20 — Skill update: playback follows same profile-driven training loop
+
+### Update applied
+- `VOICE-BRIDGE-SKILL.md` now defines a dedicated playback training loop matching capture workflow:
+  - gate by profile completeness of active playback endpoint (not hardcoded endpoint IDs),
+  - if active `playback.endpoint_settings.<pcm_index>` is missing/empty/incomplete, playback training loop must run,
+  - required playback fields documented as `sample_rate` + `channels` (optional `speed_compensation` for pitch correction),
+  - same artifact pull requirement (WAVs + transcriptions) before tuning,
+  - human validates remote-heard playback quality (`normal/high/low/choppy`) and reports back to AI,
+  - AI tunes only active playback endpoint settings, pushes profile, and iterates until stable.

@@ -66,7 +66,7 @@ Use this when modem/call session shifts to another PCM endpoint.
 5. Push updated profile and retest.
 6. Repeat until quality and transcription are stable.
 
-### Capture training loop (current operating method)
+### Capture training loop
 - Gate condition:
   - Resolve active capture endpoint for the call.
   - If `capture.endpoint_settings.<active_pcm_index>` is complete, do not run capture training.
@@ -90,7 +90,31 @@ Use this when modem/call session shifts to another PCM endpoint.
   - push profile, retest, pull artifacts again.
 - Stop condition:
   - keep iterating until human confirms natural pitch and transcript alignment on the pulled files.
-- This is the exact process currently used for capture tuning.
+
+### Playback training loop
+- Gate condition:
+  - Resolve active playback endpoint for the call.
+  - If `playback.endpoint_settings.<active_pcm_index>` is complete, do not run playback training.
+  - If that endpoint entry is missing, empty (`{}`), or incomplete, run playback training loop.
+- Playback entry is considered complete when required fields exist:
+  - `sample_rate`
+  - `channels`
+  - optional tuning field: `speed_compensation` (set when needed for pitch correction)
+- Required precondition:
+  - profile must enable wav logging: `logging.debug_wav_dump.enabled=true`,
+  - updated profile must be pushed and loaded on device before starting the loop.
+- Mandatory artifacts each loop:
+  - pull call WAVs (`tx-*`, plus `rxm-*`/`rx-*` for context) to local `phone/debug-wavs/latest-call-*`
+  - pull transcription outputs for the same call.
+- Human QA step (required):
+  - evaluate what is heard on the remote phone during playback,
+  - classify playback quality (`normal`, `too high/fast`, `too low/slow`, `choppy`),
+  - report this back to AI with relevant call timestamp and related pulled filenames.
+- AI tuning step:
+  - adjust only the active playback endpoint settings in `playback.endpoint_settings.<pcm_index>`,
+  - push profile, retest, pull artifacts again.
+- Stop condition:
+  - keep iterating until human confirms natural playback pitch/timing and stable conversational delivery.
 
 ## Acceptance criteria
 - Greeting audible to remote caller.
