@@ -3383,3 +3383,25 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 03:42 — App-only greeting compliance fallback for Qwen2.5-1.5B
+
+### What
+- Kept all changes on phone app side (no Spark gateway edits).
+- Updated greeting hint constant to a fixed exact-target string:
+  - `GREETING_EXACT_TEXT`
+  - `GREETING_PROMPT_HINT`
+- Added greeting-specific reply sanitation bounds (`GREETING_MAX_REPLY_SENTENCES`, `GREETING_MAX_REPLY_CHARS`) so greeting text is not truncated by normal short-reply limits.
+- Added greeting compliance check (`isGreetingReplyCompliant`) that validates required phrases.
+- Greeting playback policy now:
+  - if model greeting is compliant, keep backend audio playback path;
+  - if model greeting is not compliant, force exact local fallback text for greeting (app-only deterministic fallback).
+- Refactored `sanitizeReply(...)` to accept per-call limits (`maxSentences`, `maxChars`) while preserving existing defaults for normal turns.
+
+### Why
+- Qwen 2.5 1.5B is less reliable on strict verbatim output under regular prompting.
+- This app-only path improves deterministic greeting behavior without requiring constrained decoding changes on Spark.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
