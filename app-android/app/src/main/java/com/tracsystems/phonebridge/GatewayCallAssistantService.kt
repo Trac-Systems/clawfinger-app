@@ -510,6 +510,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                                 prefix = "rx",
                                 wavBytes = capture.wav,
                                 hint = "a${attempt + 1}-${selectedRootCaptureSource?.name ?: "unknown"}",
+                                pcmDevice = selectedRootCaptureSource?.device,
+                                sampleRate = selectedRootCaptureSampleRate,
                             )
                         }
                         var candidateAudioWav = capture.wav
@@ -537,6 +539,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                                         prefix = "rxa",
                                         wavBytes = adaptiveCandidate.wav,
                                         hint = "a${attempt + 1}-sr${adaptiveCandidate.sampleRate}",
+                                        pcmDevice = selectedRootCaptureSource?.device,
+                                        sampleRate = adaptiveCandidate.sampleRate,
                                     )
                                 }
                             }
@@ -693,6 +697,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         prefix = "tx",
                         wavBytes = replyWav,
                         hint = transcriptPreview.take(32),
+                        pcmDevice = selectedRootPlaybackDevice,
                     )
                 }
                 val reply = response?.reply?.trim().orEmpty()
@@ -1056,6 +1061,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 prefix = "rxm",
                 wavBytes = utteranceWav,
                 hint = "vad-$chunkCount",
+                pcmDevice = selectedRootCaptureSource?.device,
+                sampleRate = sampleRate,
             )
         }
         pinRootCaptureSource()
@@ -1155,6 +1162,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     prefix = "rxu",
                     wavBytes = capture.wav,
                     hint = "c${windowIndex + 1}-${selectedRootCaptureSource?.name ?: "unknown"}",
+                    pcmDevice = selectedRootCaptureSource?.device,
+                    sampleRate = selectedRootCaptureSampleRate,
                 )
             }
             val continuationTranscript = runCatching { callGatewayAsr(capture.wav) }
@@ -1739,6 +1748,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 prefix = "rxraw",
                 wavBytes = pcm16ToWav(monoPcm, effectiveSampleRate),
                 hint = "d${device}-req${sampleRate}",
+                pcmDevice = device,
+                sampleRate = effectiveSampleRate,
             )
         }
         return RootCaptureFrame(
@@ -1791,13 +1802,15 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             )
             return null
         }
+        val decoded = decodeWavToPcm16Mono(wav) ?: return null
+        val effectiveSampleRate = captureEffectiveSampleRateForDevice(device, decoded.sampleRate)
         persistDebugWav(
             prefix = "rxraw",
             wavBytes = if (DEBUG_DUMP_ROOT_RAW_CAPTURE && (wav?.size ?: 0) >= MIN_DEBUG_RAW_WAV_BYTES) wav else null,
             hint = "d${device}-req${sampleRate}",
+            pcmDevice = device,
+            sampleRate = effectiveSampleRate,
         )
-        val decoded = decodeWavToPcm16Mono(wav) ?: return null
-        val effectiveSampleRate = captureEffectiveSampleRateForDevice(device, decoded.sampleRate)
         if (decoded.sampleRate != sampleRate || decoded.channels != channels || decoded.bitsPerSample != 16) {
             Log.w(
                 TAG,
@@ -2216,7 +2229,13 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
-    private fun persistDebugWav(prefix: String, wavBytes: ByteArray?, hint: String = ""): String? {
+    private fun persistDebugWav(
+        prefix: String,
+        wavBytes: ByteArray?,
+        hint: String = "",
+        pcmDevice: Int? = null,
+        sampleRate: Int? = null,
+    ): String? {
         if (!runtimeDebugWavDumpEnabled || wavBytes == null || wavBytes.isEmpty()) {
             return null
         }
@@ -2229,7 +2248,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             .trim('-')
             .take(36)
         val suffix = if (safeHint.isBlank()) "" else "-$safeHint"
-        val file = File(directory, "$prefix-${System.currentTimeMillis()}$suffix.wav")
+        val deviceTag = pcmDevice?.let { "-d$it" }.orEmpty()
+        val sampleRateTag = sampleRate?.takeIf { it > 0 }?.let { "-r$it" }.orEmpty()
+        val file = File(directory, "$prefix${deviceTag}${sampleRateTag}-${System.currentTimeMillis()}$suffix.wav")
         return runCatching {
             file.writeBytes(wavBytes)
             pruneDebugWavDirectory(directory)
