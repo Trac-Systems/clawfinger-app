@@ -3783,3 +3783,13 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - `scripts/android-push-profile.sh` passed; profile was pushed to device path.
+
+## 2026-02-21 06:58 — Policy set: profile-only tuning path
+
+### Decision
+- From this point forward, all PCM/audio tuning adjustments are done through JSON profile edits and profile loading.
+- No new tuning hardcodes will be introduced in app logic for these adjustments.
+
+### Operational rule
+- Edit `profiles/active-profile.json` (or a versioned profile), then push via `scripts/android-push-profile.sh`.
+- App behavior changes are accepted only if they are profile-driven.
