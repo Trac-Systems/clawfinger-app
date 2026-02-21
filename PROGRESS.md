@@ -4143,3 +4143,18 @@ _Last updated: 2026-02-19_
 - User confirmed greeting is now audible on remote phone.
 - Correlated with telemetry shift from `playedMs=0` (instant tinyplay exit) to `playedMs=4432` on greeting playback.
 - Current profile keeps period flags disabled (`period_size=0`, `period_count=0`).
+
+## 2026-02-21 18:36 — Restored known smoother tinyplay buffer profile from earlier stable run
+
+### Why
+- Progress history shows choppiness was previously reduced with larger (but valid) tinyplay buffering.
+- Current `period_size=0/period_count=0` fixed audibility but can reintroduce underrun chop.
+
+### Profile change
+- Set playback tuning back to previously smoother values:
+  - `playback.validated_primary.period_size: 1024`
+  - `playback.validated_primary.period_count: 8`
+- Kept current validated audible route setup (device 29, 48k, 2ch, speed 1.5).
+
+### Intent
+- Keep greeting audibility while reducing choppy playback artifacts.
