@@ -4596,8 +4596,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
         private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(29, 23, 18, 19)
         private val ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = mapOf(
-            29 to 32_000,
-            23 to 32_000,
+            29 to 96_000,
+            23 to 96_000,
         )
         private val ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = mapOf(
             29 to 2,
