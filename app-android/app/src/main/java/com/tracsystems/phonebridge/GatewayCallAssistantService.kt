@@ -102,6 +102,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeLocalTranscriptHintEnabled: Boolean = ENABLE_LOCAL_TRANSCRIPT_HINT
     private var runtimePolicyNoUnvalidatedEndpointFallback: Boolean = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
     private var runtimePolicyFailFastIfNoProfileMatch: Boolean = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
+    private var runtimeProfileLoaded: Boolean = false
     private var adaptiveCaptureSampleRate: Int? = null
     private var adaptiveCaptureRateLocked: Boolean = false
     private var adaptiveCaptureRateNoInfoStreak: Int = 0
@@ -123,6 +124,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val serviceActive = AtomicBoolean(false)
     private val speaking = AtomicBoolean(false)
     private val callMuteEnforced = AtomicBoolean(false)
+    private val captureTurnInProgress = AtomicBoolean(false)
     private val lastSpeechActivityAtMs = AtomicLong(0L)
     private val lastPlaybackEndedAtMs = AtomicLong(0L)
     private val postPlaybackCaptureFlushPending = AtomicBoolean(false)
@@ -211,9 +213,15 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260222-post-playback-backlog-flush-a")
+            Log.i(TAG, "build marker: 20260222-stability-cleanup-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
+            if (!runtimeProfileLoaded) {
+                Log.e(TAG, "service start aborted: runtime profile is unavailable")
+                serviceActive.set(false)
+                stopSelf()
+                return START_NOT_STICKY
+            }
             speaking.set(false)
             sessionId = null
             selectedAudioSource = null
@@ -440,7 +448,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 var transcriptChunkCount = 0
                 var lastRejectionReason: String? = null
                 var sameSourceRetries = 0
-                val strictStreamOnly = runtimeStrictStreamOnly || runtimePolicyNoUnvalidatedEndpointFallback
+                val strictStreamOnly = runtimeStrictStreamOnly
                 val useStateMachine = ENABLE_UTTERANCE_STATE_MACHINE
                 if (useStateMachine) {
                     val utterance = captureUtteranceStateMachine()
@@ -679,6 +687,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
                 if (
+                    ENABLE_SHORT_TURN_CONSENSUS &&
                     transcriptPreview.isNotBlank() &&
                     transcriptPreviewCoreTokenCount(transcriptPreview) <= SHORT_TURN_MAX_TOKENS &&
                     !hasShortTurnConsensus(transcriptPreview, transcriptAudioWav)
@@ -935,34 +944,36 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (!ENABLE_ROOT_PCM_BRIDGE) {
             return null
         }
-        ensureRootCaptureCalibrated(reason = "utterance_state", force = false)
-        var preRoll = ByteArray(0)
-        val current = ByteArrayOutputStream()
-        var speakingNow = false
-        var softStartSpeechFrames = 0
-        var speechSamples = 0
-        var silenceSamples = 0
-        var chunkCount = 0
-        val captureStartedAtMs = System.currentTimeMillis()
-        var sampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
-        var fastEndpointMode = System.currentTimeMillis() - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
-        val updateDerivedThresholds = { fastMode: Boolean ->
-            val preRollMaxBytes = ((sampleRate * UTTERANCE_PRE_ROLL_MS) / 1000) * 2
-            val minSpeechSamples = (sampleRate * UTTERANCE_MIN_SPEECH_MS) / 1000
-            val silenceMs = if (fastMode) FAST_POST_PLAYBACK_SILENCE_MS else UTTERANCE_SILENCE_MS
-            val silenceSamplesLimit = (sampleRate * silenceMs) / 1000
-            val maxTurnSamples = (sampleRate * UTTERANCE_MAX_TURN_MS) / 1000
-            EndpointThresholds(
-                preRollMaxBytes = preRollMaxBytes,
-                minSpeechSamples = minSpeechSamples,
-                silenceSamplesLimit = silenceSamplesLimit,
-                maxTurnSamples = maxTurnSamples,
-            )
-        }
-        var thresholds = updateDerivedThresholds(fastEndpointMode)
-        var streamBacklogEvaluated = false
+        captureTurnInProgress.set(true)
+        try {
+            ensureRootCaptureCalibrated(reason = "utterance_state", force = false)
+            var preRoll = ByteArray(0)
+            val current = ByteArrayOutputStream()
+            var speakingNow = false
+            var softStartSpeechFrames = 0
+            var speechSamples = 0
+            var silenceSamples = 0
+            var chunkCount = 0
+            val captureStartedAtMs = System.currentTimeMillis()
+            var sampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+            var fastEndpointMode = System.currentTimeMillis() - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
+            val updateDerivedThresholds = { fastMode: Boolean ->
+                val preRollMaxBytes = ((sampleRate * UTTERANCE_PRE_ROLL_MS) / 1000) * 2
+                val minSpeechSamples = (sampleRate * UTTERANCE_MIN_SPEECH_MS) / 1000
+                val silenceMs = if (fastMode) FAST_POST_PLAYBACK_SILENCE_MS else UTTERANCE_SILENCE_MS
+                val silenceSamplesLimit = (sampleRate * silenceMs) / 1000
+                val maxTurnSamples = (sampleRate * UTTERANCE_MAX_TURN_MS) / 1000
+                EndpointThresholds(
+                    preRollMaxBytes = preRollMaxBytes,
+                    minSpeechSamples = minSpeechSamples,
+                    silenceSamplesLimit = silenceSamplesLimit,
+                    maxTurnSamples = maxTurnSamples,
+                )
+            }
+            var thresholds = updateDerivedThresholds(fastEndpointMode)
+            var streamBacklogEvaluated = false
 
-        while (InCallStateHolder.hasLiveCall()) {
+            while (InCallStateHolder.hasLiveCall()) {
             val nowMs = System.currentTimeMillis()
             val elapsedMs = (nowMs - captureStartedAtMs).toInt()
             if (elapsedMs >= UTTERANCE_LOOP_TIMEOUT_MS) {
@@ -1118,56 +1129,59 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (shouldFlush) {
                 break
             }
-        }
+            }
 
-        if (!speakingNow || speechSamples < thresholds.minSpeechSamples || current.size() < 2) {
-            return null
-        }
-        val utterancePcm = current.toByteArray()
-        val maxBytes = thresholds.maxTurnSamples * 2
-        val cappedPcm = if (utterancePcm.size > maxBytes && maxBytes > 0) {
-            utterancePcm.copyOfRange(0, maxBytes)
-        } else {
-            utterancePcm
-        }
-        val adaptiveAsr = transcribeUtteranceAdaptive(cappedPcm, sampleRate)
-        val utteranceWav = adaptiveAsr?.wav ?: pcm16ToWav(cappedPcm, sampleRate)
-        val transcript = adaptiveAsr?.transcript.orEmpty()
-        clearRootRollingPrebuffer()
-        if (runtimeDebugWavDumpEnabled) {
-            persistDebugWav(
-                prefix = "rxm",
-                wavBytes = utteranceWav,
-                hint = "vad-$chunkCount",
-                pcmDevice = selectedRootCaptureSource?.device,
-                sampleRate = sampleRate,
-            )
-        }
-        pinRootCaptureSource()
-        if (transcript.isBlank()) {
-            CommandAuditLog.add("voice_bridge:asr_local_empty")
+            if (!speakingNow || speechSamples < thresholds.minSpeechSamples || current.size() < 2) {
+                return null
+            }
+            val utterancePcm = current.toByteArray()
+            val maxBytes = thresholds.maxTurnSamples * 2
+            val cappedPcm = if (utterancePcm.size > maxBytes && maxBytes > 0) {
+                utterancePcm.copyOfRange(0, maxBytes)
+            } else {
+                utterancePcm
+            }
+            val adaptiveAsr = transcribeUtteranceAdaptive(cappedPcm, sampleRate)
+            val utteranceWav = adaptiveAsr?.wav ?: pcm16ToWav(cappedPcm, sampleRate)
+            val transcript = adaptiveAsr?.transcript.orEmpty()
+            clearRootRollingPrebuffer()
+            if (runtimeDebugWavDumpEnabled) {
+                persistDebugWav(
+                    prefix = "rxm",
+                    wavBytes = utteranceWav,
+                    hint = "vad-$chunkCount",
+                    pcmDevice = selectedRootCaptureSource?.device,
+                    sampleRate = sampleRate,
+                )
+            }
+            pinRootCaptureSource()
+            if (transcript.isBlank()) {
+                CommandAuditLog.add("voice_bridge:asr_local_empty")
+                Log.i(
+                    TAG,
+                    "state-machine utterance local ASR empty; forwarding audio for server ASR chunks=$chunkCount speechSamples=$speechSamples silenceSamples=$silenceSamples",
+                )
+                return AssembledUtterance(
+                    transcript = "",
+                    audioWav = utteranceWav,
+                    chunkCount = max(1, chunkCount),
+                    localAsrScore = 0,
+                )
+            }
             Log.i(
                 TAG,
-                "state-machine utterance local ASR empty; forwarding audio for server ASR chunks=$chunkCount speechSamples=$speechSamples silenceSamples=$silenceSamples",
+                "state-machine utterance transcript=${transcript.take(140)} chunks=$chunkCount speechSamples=$speechSamples silenceSamples=$silenceSamples",
             )
+            CommandAuditLog.add("voice_bridge:asr:${transcript.take(96)}")
             return AssembledUtterance(
-                transcript = "",
+                transcript = transcript,
                 audioWav = utteranceWav,
                 chunkCount = max(1, chunkCount),
-                localAsrScore = 0,
+                localAsrScore = adaptiveAsr?.score ?: 0,
             )
+        } finally {
+            captureTurnInProgress.set(false)
         }
-        Log.i(
-            TAG,
-            "state-machine utterance transcript=${transcript.take(140)} chunks=$chunkCount speechSamples=$speechSamples silenceSamples=$silenceSamples",
-        )
-        CommandAuditLog.add("voice_bridge:asr:${transcript.take(96)}")
-        return AssembledUtterance(
-            transcript = transcript,
-            audioWav = utteranceWav,
-            chunkCount = max(1, chunkCount),
-            localAsrScore = adaptiveAsr?.score ?: 0,
-        )
     }
 
     private fun appendAndTrimBytes(existing: ByteArray, incoming: ByteArray, maxBytes: Int): ByteArray {
@@ -1983,6 +1997,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         noAudioStreak: Int,
     ) {
         if (!InCallStateHolder.hasLiveCall()) {
+            return
+        }
+        if (!force && captureTurnInProgress.get()) {
+            CommandAuditLog.add("root:route_recover:skip:capture_turn:$reason")
             return
         }
         if (!force) {
@@ -4921,8 +4939,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun loadRuntimePcmProfile() {
+        runtimeProfileLoaded = false
         resetRuntimePcmProfileToDefaults()
         if (!ENABLE_PROFILE_JSON_LOADING) {
+            runtimeProfileLoaded = true
             return
         }
         val profileFile = resolveRuntimeProfileFile()
@@ -5011,6 +5031,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 TAG,
                 "runtime profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, gateway=${runtimeGatewayBaseUrl}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }}, captureRateOverrides=${runtimeCaptureRequestRateOverrides}, captureChannelOverrides=${runtimeCaptureRequestChannelOverrides}, captureEffectiveOverrides=${runtimeCaptureEffectiveRateOverrides}, persistent=${runtimeRootPlaybackPersistentSession}, strictStream=$runtimeStrictStreamOnly)",
             )
+            runtimeProfileLoaded = true
         }.onFailure { error ->
             CommandAuditLog.add("voice_bridge:profile:load_error:${error.message?.take(80)}")
             Log.w(TAG, "runtime PCM profile load failed from ${profileFile.absolutePath}", error)
@@ -5081,6 +5102,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runtimeCaptureEffectiveRateOverrides = emptyMap()
         runtimePolicyNoUnvalidatedEndpointFallback = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
         runtimePolicyFailFastIfNoProfileMatch = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
+        runtimeProfileLoaded = false
         runtimeEnableRouteRecoverOnNoAudio = ENABLE_ROOT_ROUTE_RECOVER_ON_NO_AUDIO
         runtimeRootRouteRecoverMinNoAudioStreak = ROOT_ROUTE_RECOVER_MIN_NO_AUDIO_STREAK
         runtimeRootRouteRecoverThrottleMs = ROOT_ROUTE_RECOVER_THROTTLE_MS
@@ -5849,6 +5871,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val POST_PLAYBACK_ECHO_GUARD_WINDOW_MS = 1_200L
         private const val POST_PLAYBACK_ECHO_GUARD_MAX_TOKENS = 3
         private const val POST_PLAYBACK_ECHO_REJECT_OVERLAP_THRESHOLD = 0.60
+        private const val ENABLE_SHORT_TURN_CONSENSUS = false
         private const val SHORT_TURN_MAX_TOKENS = 2
         private const val SHORT_TURN_CONSENSUS_OVERLAP_THRESHOLD = 0.45
         private const val SUPPRESS_BACKEND_CLARIFY_REPLY = true
