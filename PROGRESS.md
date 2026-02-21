@@ -4362,3 +4362,4 @@ _Last updated: 2026-02-19_
   - each loop must pull WAV artifacts + transcriptions,
   - human listens to pulled `rxm-*` files and reports pitch status (`normal/high/low`) with filenames,
   - AI tunes only `capture.endpoint_settings.<pcm_index>`, pushes profile, and repeats until corrected.
+  - precondition added: `logging.debug_wav_dump.enabled=true` must be set in profile and the profile must be pushed/loaded before loop execution.

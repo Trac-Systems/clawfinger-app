@@ -70,6 +70,9 @@ Use this when modem/call session shifts to another PCM endpoint.
 - Gate condition:
   - If active capture endpoint is `20`, do not run capture training.
   - Run capture training only when active capture endpoint is not `20`.
+- Required precondition:
+  - profile must enable wav logging: `logging.debug_wav_dump.enabled=true`,
+  - updated profile must be pushed and loaded on device before starting the loop.
 - Mandatory artifacts each loop:
   - pull call WAVs (`rxm-*`, `rx-*`, `tx-*`) to local `phone/debug-wavs/latest-call-*`
   - pull transcription outputs for the same call.
