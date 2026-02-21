@@ -67,8 +67,7 @@
   },
   "capture": {
     "candidate_order_in_app": [
-      20,
-      21
+      20
     ],
     "endpoint_settings": {
       "20": {
