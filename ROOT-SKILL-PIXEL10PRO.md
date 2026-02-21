@@ -15,7 +15,10 @@ Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
 ## Device + build scope
 - Device: Pixel 10 Pro (`blazer`)
 - Build family used in this project: Android 16 `BD3A.250721.001.E1`
-- Root artifacts folder: `phone/root-work/`
+- Local rooting workspace is temporary:
+  - `phone/root-work/` (temporary artifacts)
+  - `phone/rootd/` (temporary rootd scripts)
+  - delete both folders after deployment/verification.
 
 ## Non-negotiable runtime requirements
 - Do not PIN/Password the device.
@@ -35,7 +38,7 @@ Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
    - Reboot and verify again.
 
 ### Superkey
-- Stored in: `phone/root-work/APATCH_SUPERKEY.txt`
+- Store only in temporary `phone/root-work/APATCH_SUPERKEY.txt` during rooting.
 - Required for APatch privileged operations.
 
 ## Root runtime architecture (required)
@@ -47,9 +50,13 @@ Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
 - `/data/adb/service.d/phonebridge-root-handler.sh`
 - `/data/adb/service.d/phonebridge-rootd.sh`
 
-### rootd source files in repo
-- `phone/rootd/phonebridge-root-handler.sh`
-- `phone/rootd/phonebridge-rootd.sh`
+### rootd local staging (temporary)
+- Create temporary `phone/rootd/` during setup.
+- Stage:
+  - `phone/rootd/phonebridge-root-handler.sh`
+  - `phone/rootd/phonebridge-rootd.sh`
+- Push both scripts to `/data/adb/service.d/`.
+- Delete local `phone/rootd/` after successful deployment.
 
 ### rootd health checks
 - Endpoint reachable: `127.0.0.1:48733`
@@ -60,6 +67,7 @@ Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
 ## Persistence requirements
 - APatch root must survive reboot.
 - rootd scripts in `/data/adb/service.d/` must survive reboot.
+- Local temporary folders (`phone/root-work/`, `phone/rootd/`) must not be kept.
 
 ## Recovery path (if boot issues return)
 - Reflash matching stock partitions from same factory image:
