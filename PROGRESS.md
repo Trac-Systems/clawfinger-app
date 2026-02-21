@@ -4137,3 +4137,9 @@ _Last updated: 2026-02-19_
 
 ### Intent
 - Remove `-p/-n` from tinyplay command path and re-check whether playback duration becomes non-zero and greeting becomes audible.
+
+## 2026-02-21 18:33 — Greeting audibility restored (validated)
+
+- User confirmed greeting is now audible on remote phone.
+- Correlated with telemetry shift from `playedMs=0` (instant tinyplay exit) to `playedMs=4432` on greeting playback.
+- Current profile keeps period flags disabled (`period_size=0`, `period_count=0`).
