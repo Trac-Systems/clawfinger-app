@@ -274,7 +274,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         networkExecutor.execute {
             val response = runCatching {
                 callSparkTurn(
-                    transcript = "Greet the caller in one short sentence.",
+                    transcript = "Say exactly: Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead.",
                     audioWav = buildSilenceWav(),
                 )
             }.onFailure { error ->

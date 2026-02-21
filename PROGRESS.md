@@ -3317,3 +3317,14 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 02:49 — Greeting instruction updated for beep protocol intro
+
+### What
+- Updated greeting turn hint sent to Spark so intro uses explicit wording:
+  - "Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead."
+- Implemented as exact-output instruction in `requestGreeting()` by changing the greeting `transcript` hint text.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
