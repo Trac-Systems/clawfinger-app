@@ -3627,3 +3627,15 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:09 — Re-enabled ready beep on every turn per requirement
+
+### What
+- Set `READY_BEEP_EVERY_TURN = true` so each assistant turn returns an explicit readiness beep.
+
+### Why
+- Requirement changed: readiness cue must be present every turn, not greeting-only.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.

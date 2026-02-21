@@ -4437,7 +4437,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val READY_BEEP_AMPLITUDE = 0.30
         private const val READY_BEEP_ATTACK_MS = 12
         private const val READY_BEEP_RELEASE_MS = 28
-        private const val READY_BEEP_EVERY_TURN = false
+        private const val READY_BEEP_EVERY_TURN = true
         private const val READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS = 60L
         private const val CAPTURE_RETRY_DELAY_MS = 120L
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
