@@ -59,7 +59,7 @@ Canonical runbook for Pixel call audio capture/playback + Spark voice gateway in
   - output: transcript + ASR metrics
   - includes silence/noise hallucination suppression.
 - `POST /api/turn`
-  - input: short WAV + `transcript_hint` + `skip_asr=true`
+  - input: turn audio + transcript metadata
   - output: reply text + TTS WAV + per-stage metrics.
 
 ## App files that must stay aligned
@@ -123,7 +123,7 @@ Canonical runbook for Pixel call audio capture/playback + Spark voice gateway in
 
 ### Symptom: call connected but remote side hears no assistant voice
 - Check:
-  - `root tinyplay ok device=19|18` in logs,
+  - `root tinyplay ok device=29` in logs,
   - route profile applied before first turn,
   - device user state is `RUNNING_UNLOCKED`.
 
