@@ -4142,3 +4142,9 @@ _Last updated: 2026-02-19_
 
 ### Goal
 - Recover greeting audibility when device 29 is accepted by tinyplay but not actually audible on remote leg.
+
+## 2026-02-21 18:15 — Reverted profile sample-rate refit
+
+- Reverted commit `04223be` via `1a74cbb`.
+- Restored previous playback profile for device 29 (`48k`, `2ch`, `speed_comp=1.5`).
+- Reason: this was a hypothesis-level refit and not the root-cause fix.
