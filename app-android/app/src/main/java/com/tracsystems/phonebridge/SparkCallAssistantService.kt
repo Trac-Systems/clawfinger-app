@@ -61,6 +61,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var selectedRootPlaybackDevice: Int? = null
     private var lastCaptureShiftSignature: String? = null
     private var lastPlaybackShiftSignature: String? = null
+    private var runtimeDebugWavDumpEnabled: Boolean = ENABLE_DEBUG_WAV_DUMP_DEFAULT
+    private var runtimeDebugWavMaxFiles: Int = MAX_DEBUG_WAV_FILES_DEFAULT
+    private var runtimeAuditLevel: CommandAuditLog.Level = DEFAULT_AUDIT_LOG_LEVEL
+    private var runtimeAuditTranscriptsEnabled: Boolean = DEFAULT_AUDIT_TRANSCRIPTS_ENABLED
+    private var runtimeAuditDebugWavEventsEnabled: Boolean = DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED
     private var adaptiveCaptureSampleRate: Int? = null
     private var adaptiveCaptureRateLocked: Boolean = false
     private var adaptiveCaptureRateNoInfoStreak: Int = 0
@@ -456,7 +461,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         capture.analysis?.let { analysis ->
                             maybeEnrollSpeaker(analysis)
                         }
-                        if (ENABLE_DEBUG_WAV_DUMP) {
+                        if (runtimeDebugWavDumpEnabled) {
                             persistDebugWav(
                                 prefix = "rx",
                                 wavBytes = capture.wav,
@@ -483,7 +488,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                                 CommandAuditLog.add(
                                     "voice_bridge:fallback_adaptive_rate:${decodedCapture.sampleRate}->${adaptiveCandidate.sampleRate}:score=${adaptiveCandidate.score}",
                                 )
-                                if (ENABLE_DEBUG_WAV_DUMP) {
+                                if (runtimeDebugWavDumpEnabled) {
                                     persistDebugWav(
                                         prefix = "rxa",
                                         wavBytes = adaptiveCandidate.wav,
@@ -642,7 +647,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     Log.i(TAG, "spark turn transcript (server): ${turnTranscript.take(140)}")
                     CommandAuditLog.add("voice_bridge:turn_asr:${turnTranscript.take(96)}")
                 }
-                if (ENABLE_DEBUG_WAV_DUMP) {
+                if (runtimeDebugWavDumpEnabled) {
                     val replyWav = response?.audioWavBase64
                         ?.let { runCatching { Base64.getDecoder().decode(it.trim()) }.getOrNull() }
                     persistDebugWav(
@@ -990,7 +995,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val utteranceWav = adaptiveAsr?.wav ?: pcm16ToWav(cappedPcm, sampleRate)
         val transcript = adaptiveAsr?.transcript.orEmpty()
         clearRootRollingPrebuffer()
-        if (ENABLE_DEBUG_WAV_DUMP) {
+        if (runtimeDebugWavDumpEnabled) {
             persistDebugWav(
                 prefix = "rxm",
                 wavBytes = utteranceWav,
@@ -1085,7 +1090,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             consecutiveNoAudioRejects = 0
             capture.analysis?.let { maybeEnrollSpeaker(it) }
-            if (ENABLE_DEBUG_WAV_DUMP) {
+            if (runtimeDebugWavDumpEnabled) {
                 persistDebugWav(
                     prefix = "rxu",
                     wavBytes = capture.wav,
@@ -2066,7 +2071,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun persistDebugWav(prefix: String, wavBytes: ByteArray?, hint: String = ""): String? {
-        if (!ENABLE_DEBUG_WAV_DUMP || wavBytes == null || wavBytes.isEmpty()) {
+        if (!runtimeDebugWavDumpEnabled || wavBytes == null || wavBytes.isEmpty()) {
             return null
         }
         val directory = File(filesDir, DEBUG_WAV_DIR_NAME)
@@ -2093,10 +2098,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val wavFiles = directory.listFiles { entry -> entry.isFile && entry.extension.equals("wav", ignoreCase = true) }
             ?.sortedByDescending { it.lastModified() }
             ?: return
-        if (wavFiles.size <= MAX_DEBUG_WAV_FILES) {
+        val limit = runtimeDebugWavMaxFiles.coerceAtLeast(8)
+        if (wavFiles.size <= limit) {
             return
         }
-        wavFiles.drop(MAX_DEBUG_WAV_FILES).forEach { file ->
+        wavFiles.drop(limit).forEach { file ->
             runCatching { file.delete() }
         }
     }
@@ -4396,6 +4402,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = profile.playbackRateOverrides
             ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = profile.playbackChannelOverrides
             ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = profile.playbackSpeedOverrides
+            runtimeDebugWavDumpEnabled = profile.debugWavDumpEnabled
+            runtimeDebugWavMaxFiles = profile.debugWavMaxFiles
+            runtimeAuditLevel = profile.auditLevel
+            runtimeAuditTranscriptsEnabled = profile.auditTranscriptsEnabled
+            runtimeAuditDebugWavEventsEnabled = profile.auditDebugWavEventsEnabled
+            CommandAuditLog.configure(
+                level = runtimeAuditLevel,
+                transcriptEventsEnabled = runtimeAuditTranscriptsEnabled,
+                debugWavEventsEnabled = runtimeAuditDebugWavEventsEnabled,
+            )
             selectedRootPlaybackDevice = null
             lastCaptureShiftSignature = null
             lastPlaybackShiftSignature = null
@@ -4431,6 +4447,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES_DEFAULT
         ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES_DEFAULT
         ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT
+        runtimeDebugWavDumpEnabled = ENABLE_DEBUG_WAV_DUMP_DEFAULT
+        runtimeDebugWavMaxFiles = MAX_DEBUG_WAV_FILES_DEFAULT
+        runtimeAuditLevel = DEFAULT_AUDIT_LOG_LEVEL
+        runtimeAuditTranscriptsEnabled = DEFAULT_AUDIT_TRANSCRIPTS_ENABLED
+        runtimeAuditDebugWavEventsEnabled = DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED
+        CommandAuditLog.configure(
+            level = runtimeAuditLevel,
+            transcriptEventsEnabled = runtimeAuditTranscriptsEnabled,
+            debugWavEventsEnabled = runtimeAuditDebugWavEventsEnabled,
+        )
     }
 
     private fun parseRuntimePcmProfile(jsonText: String): RuntimePcmProfile? {
@@ -4476,6 +4502,23 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             )
         }
 
+        val loggingRoot = root.optJSONObject("logging")
+        val debugWavRoot = loggingRoot?.optJSONObject("debug_wav_dump")
+        val debugWavDumpEnabled = debugWavRoot?.optBoolean("enabled", ENABLE_DEBUG_WAV_DUMP_DEFAULT)
+            ?: ENABLE_DEBUG_WAV_DUMP_DEFAULT
+        val debugWavMaxFiles = debugWavRoot?.optInt("max_files", MAX_DEBUG_WAV_FILES_DEFAULT)
+            ?.takeIf { it > 0 }
+            ?: MAX_DEBUG_WAV_FILES_DEFAULT
+        val auditRoot = loggingRoot?.optJSONObject("audit")
+        val auditLevel = CommandAuditLog.Level.fromValue(
+            raw = auditRoot?.optString("level")?.takeIf { it.isNotBlank() },
+            default = DEFAULT_AUDIT_LOG_LEVEL,
+        )
+        val auditTranscriptsEnabled = auditRoot?.optBoolean("transcripts_enabled", DEFAULT_AUDIT_TRANSCRIPTS_ENABLED)
+            ?: DEFAULT_AUDIT_TRANSCRIPTS_ENABLED
+        val auditDebugWavEventsEnabled = auditRoot?.optBoolean("debug_wav_events_enabled", DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED)
+            ?: DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED
+
         if (playbackCandidates.isEmpty() || captureCandidates.isEmpty()) {
             return null
         }
@@ -4487,6 +4530,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             playbackChannelOverrides = playbackChannels,
             playbackSpeedOverrides = playbackSpeeds,
             captureCandidates = captureCandidates,
+            debugWavDumpEnabled = debugWavDumpEnabled,
+            debugWavMaxFiles = debugWavMaxFiles,
+            auditLevel = auditLevel,
+            auditTranscriptsEnabled = auditTranscriptsEnabled,
+            auditDebugWavEventsEnabled = auditDebugWavEventsEnabled,
         )
     }
 
@@ -4526,6 +4574,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val playbackChannelOverrides: Map<Int, Int>,
         val playbackSpeedOverrides: Map<Int, Double>,
         val captureCandidates: List<RootCaptureCandidate>,
+        val debugWavDumpEnabled: Boolean,
+        val debugWavMaxFiles: Int,
+        val auditLevel: CommandAuditLog.Level,
+        val auditTranscriptsEnabled: Boolean,
+        val auditDebugWavEventsEnabled: Boolean,
     )
 
     private data class RootCaptureFrame(
@@ -4848,9 +4901,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MAX_UTTERANCE_MERGED_AUDIO_MS = 9_500
         private const val UTTERANCE_TERMINAL_MIN_TOKEN_COUNT = 8
         private const val MAX_SAME_SOURCE_RETRIES = 1
-        private const val ENABLE_DEBUG_WAV_DUMP = true
+        private const val ENABLE_DEBUG_WAV_DUMP_DEFAULT = true
         private const val DEBUG_WAV_DIR_NAME = "voice-debug"
-        private const val MAX_DEBUG_WAV_FILES = 180
+        private const val MAX_DEBUG_WAV_FILES_DEFAULT = 180
+        private val DEFAULT_AUDIT_LOG_LEVEL = CommandAuditLog.Level.VERBOSE
+        private const val DEFAULT_AUDIT_TRANSCRIPTS_ENABLED = true
+        private const val DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED = true
         private const val MIN_TRANSCRIPT_ALNUM_CHARS = 2
         private const val MIN_TRANSCRIPT_TOKEN_COUNT = 5
         private const val MIN_TRANSCRIPT_UNIQUE_RATIO = 0.45

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_NAME="com.tracsystems.phonebridge"
 SERIAL="${ANDROID_DEVICE_SERIAL:-}"
-PROFILE_SRC="${1:-$ROOT_DIR/profiles/active-profile.json}"
+PROFILE_SRC="${1:-$ROOT_DIR/profiles/pixel10pro-blazer-profile-v1.json}"
 DEST_DIR="/sdcard/Android/data/$PACKAGE_NAME/files/profiles"
 DEST_FILE="$DEST_DIR/active-profile.json"
 

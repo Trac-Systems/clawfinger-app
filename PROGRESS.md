@@ -3816,3 +3816,38 @@ _Last updated: 2026-02-19_
 
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
+
+## 2026-02-21 07:18 — Moved debug logging controls into runtime profile JSON
+
+### What
+- Added profile-driven logging controls in `SparkCallAssistantService`:
+  - `logging.debug_wav_dump.enabled`
+  - `logging.debug_wav_dump.max_files`
+  - `logging.audit.level` (`off|basic|normal|verbose`)
+  - `logging.audit.transcripts_enabled`
+  - `logging.audit.debug_wav_events_enabled`
+- Added runtime application of these settings on profile load.
+- Added defaults reset path when profile is absent/invalid.
+- Replaced hardcoded WAV debug switches with runtime values.
+- Updated `CommandAuditLog` with configurable filtering (`configure(...)`) and level gates.
+
+### Why
+- Requirement: no hardcoded on/off logging behavior in app code.
+- Logging verbosity and categories now belong to profile policy.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+
+## 2026-02-21 07:18 — Removed duplicate active profile file from repo
+
+### What
+- Kept one canonical profile file only:
+  - `profiles/pixel10pro-blazer-profile-v1.json`
+- Removed duplicated repo copy:
+  - `profiles/active-profile.json`
+- Updated push helper default source:
+  - `scripts/android-push-profile.sh` now defaults to canonical profile file and still pushes to device destination `active-profile.json`.
+
+### Why
+- User requested no profile duplication/version-salad in local repo.
+- `active-profile.json` is only a device-side runtime filename; it does not need a duplicate file in repo.
