@@ -4516,7 +4516,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_PLAYBACK_PROBE_RELEASE_MS = 24
         private const val ROOT_PLAYBACK_SAMPLE_RATE = 48_000
         private const val ROOT_PLAYBACK_CHANNELS = 1
-        private const val ENABLE_BARGE_IN_INTERRUPT = true
+        private const val ENABLE_BARGE_IN_INTERRUPT = false
         private const val BARGE_IN_ARM_DELAY_MS = 80L
         private const val BARGE_IN_PROBE_INTERVAL_MS = 220L
         private const val BARGE_IN_PLAYBACK_POLL_MS = 60L
@@ -4620,8 +4620,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             23 to 2,
         )
         private val ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = mapOf(
-            29 to 1.50,
-            23 to 1.50,
+            29 to 1.62,
+            23 to 1.62,
         )
         private val ROOT_BOOTSTRAP_COMMANDS = listOf(
             "echo /data/adb/ap/bin/su > /data/adb/ap/su_path",
