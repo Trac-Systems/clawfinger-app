@@ -276,24 +276,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (speaking.get()) return
         speaking.set(true)
         networkExecutor.execute {
-            var response: SparkTurnResponse? = null
-            for (attempt in 0 until GREETING_MAX_RETRIES) {
-                val result = runCatching {
-                    callSparkTurn(
-                        transcript = GREETING_PROMPT_HINT,
-                        audioWav = buildSilenceWav(),
-                        skipAsr = true,
-                        resetSession = attempt == 0,
-                    )
-                }.onFailure { error ->
-                    Log.e(TAG, "spark greeting failed (attempt=${attempt + 1})", error)
-                    CommandAuditLog.add("voice_bridge:error:${error.message}")
-                }.getOrNull()
-                if (result != null) {
-                    response = result
-                    break
-                }
-            }
+            val response = runCatching {
+                callSparkTurn(
+                    transcript = GREETING_PROMPT_HINT,
+                    audioWav = buildSilenceWav(),
+                    resetSession = true,
+                )
+            }.onFailure { error ->
+                Log.e(TAG, "spark greeting failed", error)
+                CommandAuditLog.add("voice_bridge:error:${error.message}")
+            }.getOrNull()
             val modelReply = sanitizeReply(
                 input = response?.reply?.trim().orEmpty(),
                 maxSentences = GREETING_MAX_REPLY_SENTENCES,
@@ -4276,7 +4268,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val SUPPRESS_BACKEND_CLARIFY_REPLY = true
         private const val GREETING_EXACT_TEXT = "Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead."
         private const val GREETING_PROMPT_HINT = "Return exactly this text and nothing else: \"$GREETING_EXACT_TEXT\""
-        private const val GREETING_MAX_RETRIES = 2
         private const val GREETING_MAX_REPLY_SENTENCES = 6
         private const val GREETING_MAX_REPLY_CHARS = 520
         private const val MAX_REPLY_SENTENCES = 3

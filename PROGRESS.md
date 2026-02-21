@@ -3424,19 +3424,3 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
-
-## 2026-02-21 03:48 — Greeting reliability hardening (app-only)
-
-### What
-- Hardened greeting request path in app only:
-  - greeting turn now sets `skipAsr=true` to avoid silence/noise ASR side-effects during intro generation;
-  - added bounded greeting retry (`GREETING_MAX_RETRIES = 2`) when Spark greeting call fails.
-- Kept `resetSession=true` on first attempt only.
-
-### Why
-- User reported no greeting / no initial turn flow.
-- This reduces greeting startup variance and avoids wasting first turn on ASR from silent seed audio.
-
-### Validation
-- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
-- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
