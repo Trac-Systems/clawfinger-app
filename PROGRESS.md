@@ -3480,3 +3480,28 @@ _Last updated: 2026-02-19_
 1. Run live call E2E to verify capture calibration convergence across first 3 turns.
 2. Add a scripted reliability run (multi-call soak + route reapply churn) and gate release on pass.
 3. Implement automatic playback-route calibration with the same lock+reprobe discipline.
+
+## 2026-02-21 04:42 — Plan expanded with portable device-profile architecture
+
+### What
+- Added **Step H** to `PLAN.md` for a full device profile system.
+- Added profile scope to include:
+  - fingerprint/carrier keyed selection,
+  - endpoint/route/sample-rate/VAD/failover settings,
+  - profile lifecycle states (`auto_generated`, `validated`, `deprecated`, `blocked`),
+  - local override + rollback,
+  - telemetry-backed profile quality tracking,
+  - profile export/import for a growing profile DB.
+- Added `PLAN.md` section **4.2 Profile system release gates**.
+
+### Why
+- Current telephony audio path is hardware/firmware/carrier sensitive.
+- We need a reusable portability layer so new devices can be onboarded via profile data, not hardcoded app rewrites.
+
+### Result
+- Plan now explicitly supports building and operating a profile database as a product capability.
+
+### Next
+1. Implement profile schema + loader in app runtime.
+2. Add default profile + fallback profile behavior.
+3. Add expert override file and validation UI path.

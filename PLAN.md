@@ -1,6 +1,6 @@
 # Phone Native Calling + Spark Voice — Recovery Plan (V2)
 
-_Last updated: 2026-02-20_
+_Last updated: 2026-02-21_
 
 ## 0) Objective
 Recover the Pixel native-call voice bridge by replacing the unstable capture/endpointing path with a clean, deterministic pipeline that:
@@ -83,6 +83,27 @@ The following classes of behavior are removed from production path:
 - Remove now-unused fallback code.
 - Commit locked working state and update both skills docs if needed.
 
+### Step H — Device profile system (portability layer)
+- Add runtime profile loader keyed by:
+  - device model / build fingerprint,
+  - carrier (MCC/MNC),
+  - call transport mode (VoLTE/VoWiFi/PSTN if detectable).
+- Add profile schema for:
+  - playback/capture endpoint candidates,
+  - route command sets (`tinymix` bundles),
+  - sample-rate policy and VAD thresholds,
+  - failover/reprobe/unpin thresholds.
+- Add profile lifecycle states:
+  - `auto_generated`, `validated`, `deprecated`, `blocked`.
+- Add local override + rollback:
+  - user expert override file,
+  - one-click revert to last known-good profile.
+- Add profile telemetry hooks:
+  - capture success/failure rates,
+  - silent turn counts,
+  - route recovery frequency.
+- Add profile export/import path to build our own profile database over time.
+
 ## 4) Acceptance criteria for V2
 V2 is accepted only if all pass:
 1. First turn and subsequent turns use correct pitch (no fast/chipmunk or slow/low artifacts).
@@ -99,6 +120,12 @@ Before rollout, enforce all gates below:
 4. **Stress gate**: 100-call soak with mixed call lengths, including overlap speech and one-word turns.
 5. **Recovery gate**: forced route churn/rebind/reboot scenarios recover automatically without manual intervention.
 6. **Release gate**: app build is blocked unless automated unit/integration checks pass and manual carrier E2E checklist is green.
+
+## 4.2) Profile system release gates
+1. **Profile select gate**: selected profile is deterministic for a given fingerprint/carrier tuple.
+2. **Fallback gate**: if profile load fails, app falls back to safe default without crashing call flow.
+3. **Rollback gate**: remote/local rollback to previous profile completes without app reinstall.
+4. **Metrics gate**: per-profile health metrics are emitted for every completed call.
 
 ## 5) Reference material used
 - Android audio playback capture constraints and usage limitations:
