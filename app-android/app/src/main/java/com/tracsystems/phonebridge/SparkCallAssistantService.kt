@@ -2028,7 +2028,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (wavBytes.size < 44) {
             return RootPlaybackResult(played = false, interrupted = false)
         }
-        val normalizedByFormat = mutableMapOf<Pair<Int, Int>, Pair<ByteArray, Long>>()
+        val normalizedByFormat = mutableMapOf<Triple<Int, Int, Int>, Pair<ByteArray, Long>>()
         ensureRootPlaybackCalibrated(reason = "reply_playback", force = false)
         val deviceOrder = buildList {
             selectedRootPlaybackDevice?.let { add(it) }
@@ -2044,11 +2044,14 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 val playbackRate = playbackSampleRateForDevice(device)
                 val playbackChannels = playbackChannelsForDevice(device)
-                val prepared = normalizedByFormat.getOrPut(playbackRate to playbackChannels) {
+                val playbackSpeedComp = playbackSpeedCompensationForDevice(device)
+                val speedKey = (playbackSpeedComp * 1000.0).toInt()
+                val prepared = normalizedByFormat.getOrPut(Triple(playbackRate, playbackChannels, speedKey)) {
                     val normalizedWav = normalizeReplyWavForCallPlayback(
                         wavBytes = wavBytes,
                         targetSampleRate = playbackRate,
                         targetChannels = playbackChannels,
+                        speedCompensation = playbackSpeedComp,
                     ) ?: return RootPlaybackResult(played = false, interrupted = false)
                     val durationMs = estimateWavDurationMs(normalizedWav, playbackRate)
                     normalizedWav to durationMs
@@ -2067,13 +2070,18 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     sampleRate = playbackRate,
                     channels = playbackChannels,
                 )
-                Log.i(TAG, "root tinyplay launch device=$device rate=$playbackRate channels=$playbackChannels")
+                Log.i(
+                    TAG,
+                    "root tinyplay launch device=$device rate=$playbackRate channels=$playbackChannels speedComp=$playbackSpeedComp",
+                )
                 runCatching { wavFile.delete() }
                 if (pid == null) {
                     continue
                 }
                 selectedRootPlaybackDevice = device
-                CommandAuditLog.add("voice_bridge:root_playback_device:$device:r$playbackRate:c$playbackChannels")
+                CommandAuditLog.add(
+                    "voice_bridge:root_playback_device:$device:r$playbackRate:c$playbackChannels:s${"%.2f".format(playbackSpeedComp)}",
+                )
                 val playbackResult = monitorRootPlayback(
                     pid = pid,
                     device = device,
@@ -2159,6 +2167,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun playbackChannelsForDevice(device: Int): Int {
         return ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES[device] ?: ROOT_PLAYBACK_CHANNELS
+    }
+
+    private fun playbackSpeedCompensationForDevice(device: Int): Double {
+        return ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES[device] ?: 1.0
     }
 
     private fun monitorRootPlayback(
@@ -2361,15 +2373,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         wavBytes: ByteArray,
         targetSampleRate: Int,
         targetChannels: Int,
+        speedCompensation: Double,
     ): ByteArray? {
         val decoded = decodeWavToPcm16Mono(wavBytes) ?: return null
-        val monoResampled = if (decoded.sampleRate == targetSampleRate) {
+        val adjustedResampleRate = (targetSampleRate * speedCompensation)
+            .toInt()
+            .coerceAtLeast(8_000)
+        val monoResampled = if (decoded.sampleRate == adjustedResampleRate) {
             decoded.pcm
         } else {
             resamplePcm16Mono(
                 pcm = decoded.pcm,
                 fromSampleRate = decoded.sampleRate,
-                toSampleRate = targetSampleRate,
+                toSampleRate = adjustedResampleRate,
             )
         }
         val interleaved = monoToInterleavedPcm16(
@@ -4596,12 +4612,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
         private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(29, 23, 18, 19)
         private val ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = mapOf(
-            29 to 96_000,
-            23 to 96_000,
+            29 to 48_000,
+            23 to 48_000,
         )
         private val ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = mapOf(
             29 to 2,
             23 to 2,
+        )
+        private val ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = mapOf(
+            29 to 1.33,
+            23 to 1.33,
         )
         private val ROOT_BOOTSTRAP_COMMANDS = listOf(
             "echo /data/adb/ap/bin/su > /data/adb/ap/su_path",
