@@ -4260,7 +4260,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             RootCaptureCandidate(device = 22, name = "incall_cap_2"),
             RootCaptureCandidate(device = 54, name = "incall_cap_3"),
         )
-        private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(19, 18)
+        private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(18, 19)
         private val ROOT_BOOTSTRAP_COMMANDS = listOf(
             "echo /data/adb/ap/bin/su > /data/adb/ap/su_path",
             "pm grant com.tracsystems.phonebridge android.permission.CALL_PHONE",

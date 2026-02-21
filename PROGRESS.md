@@ -3427,3 +3427,21 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 04:14 — Runtime device-map correction from tone probe
+
+### What
+- Ran dual-tone probe during live call:
+  - device `19` played low tone
+  - device `18` played high tone
+- User reported hearing only the second tone (high), which proves remote-audible playback path is currently device `18`.
+- Updated root playback device priority in app:
+  - `ROOT_PLAYBACK_DEVICE_CANDIDATES` changed from `[19, 18]` to `[18, 19]`.
+
+### Why
+- Logs showed tinyplay success on device `19` without remote audibility.
+- This is a runtime routing shift on phone; selecting `18` first restores audible model output path.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
