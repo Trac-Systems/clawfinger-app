@@ -79,7 +79,7 @@
     "duration_ms": 360,
     "frequency_hz": 760,
     "amplitude": 0.42,
-    "tail_gap_ms": 760,
+    "tail_gap_ms": 980,
     "every_turn": true
   },
   "logging": {

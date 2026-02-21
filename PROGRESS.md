@@ -3870,3 +3870,24 @@ _Last updated: 2026-02-19_
   - `Dial command executed: +4915129135779`
   - call state transitions `connecting -> dialing -> active`
   - assistant root playback launched on device `29`.
+
+## 2026-02-21 07:27 — Wired beep behavior to profile (post-voice margin now profile-driven)
+
+### What
+- Connected beep controls from profile into runtime:
+  - `beep.mode` (`embedded_tail` / `standalone`)
+  - `beep.every_turn`
+  - `beep.duration_ms`
+  - `beep.frequency_hz`
+  - `beep.amplitude`
+  - `beep.tail_gap_ms`
+- Replaced hardcoded beep runtime behavior with these loaded values.
+- Reset path now restores beep defaults when no profile is present.
+- Updated canonical profile:
+  - `beep.tail_gap_ms` from `760` to `980` (larger post-voice margin).
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- APK rebuilt + installed on device.
+- Profile pushed to device runtime path:
+  - `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`.

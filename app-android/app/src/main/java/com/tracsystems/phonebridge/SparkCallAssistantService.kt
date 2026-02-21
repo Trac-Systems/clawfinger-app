@@ -66,6 +66,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeAuditLevel: CommandAuditLog.Level = DEFAULT_AUDIT_LOG_LEVEL
     private var runtimeAuditTranscriptsEnabled: Boolean = DEFAULT_AUDIT_TRANSCRIPTS_ENABLED
     private var runtimeAuditDebugWavEventsEnabled: Boolean = DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED
+    private var runtimeEmbeddedReadyBeepEnabled: Boolean = ENABLE_EMBEDDED_READY_BEEP
+    private var runtimeReadyBeepEveryTurn: Boolean = READY_BEEP_EVERY_TURN
+    private var runtimeReadyBeepDurationMs: Int = READY_BEEP_DURATION_MS
+    private var runtimeReadyBeepFrequencyHz: Int = READY_BEEP_FREQUENCY_HZ
+    private var runtimeReadyBeepAmplitude: Double = READY_BEEP_AMPLITUDE
+    private var runtimeReadyBeepTailGapMs: Int = READY_BEEP_TAIL_GAP_MS
     private var adaptiveCaptureSampleRate: Int? = null
     private var adaptiveCaptureRateLocked: Boolean = false
     private var adaptiveCaptureRateNoInfoStreak: Int = 0
@@ -336,7 +342,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     audioWavBase64 = response?.audioWavBase64,
                     replyTextForEcho = reply,
                     enableBargeInInterrupt = false,
-                    appendReadyBeepTail = ENABLE_EMBEDDED_READY_BEEP,
+                    appendReadyBeepTail = runtimeEmbeddedReadyBeepEnabled,
                 )
             } else {
                 RootPlaybackResult(played = false, interrupted = false)
@@ -681,7 +687,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     playReplyViaRootPcm(
                         audioWavBase64 = response?.audioWavBase64,
                         replyTextForEcho = cleanReply,
-                        appendReadyBeepTail = ENABLE_EMBEDDED_READY_BEEP,
+                        appendReadyBeepTail = runtimeEmbeddedReadyBeepEnabled,
                     )
                 } else {
                     RootPlaybackResult(played = false, interrupted = false)
@@ -750,7 +756,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startCaptureLoopWithReadyCue(delayMs: Long, reason: String) {
-        if (ENABLE_EMBEDDED_READY_BEEP) {
+        if (runtimeEmbeddedReadyBeepEnabled) {
             startCaptureLoop(delayMs)
             return
         }
@@ -758,7 +764,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             startCaptureLoop(delayMs)
             return
         }
-        if (!READY_BEEP_EVERY_TURN && !reason.startsWith("greeting")) {
+        if (!runtimeReadyBeepEveryTurn && !reason.startsWith("greeting")) {
             startCaptureLoop(delayMs)
             return
         }
@@ -2221,10 +2227,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun appendReadyBeepTailToWav(wavBytes: ByteArray): ByteArray? {
         val decoded = decodeWavToPcm16Mono(wavBytes) ?: return null
         val sampleRate = decoded.sampleRate.takeIf { it > 0 } ?: ROOT_PLAYBACK_SAMPLE_RATE
-        val beepFrames = ((sampleRate * READY_BEEP_DURATION_MS) / 1000).coerceAtLeast(8)
-        val gapFrames = ((sampleRate * READY_BEEP_TAIL_GAP_MS) / 1000).coerceAtLeast(0)
+        val beepFrames = ((sampleRate * runtimeReadyBeepDurationMs.coerceAtLeast(1)) / 1000).coerceAtLeast(8)
+        val gapFrames = ((sampleRate * runtimeReadyBeepTailGapMs.coerceAtLeast(0)) / 1000).coerceAtLeast(0)
         val beepPcm = ByteArray(beepFrames * 2)
-        val twoPiF = (2.0 * Math.PI * READY_BEEP_FREQUENCY_HZ.toDouble()) / sampleRate.toDouble()
+        val twoPiF = (2.0 * Math.PI * runtimeReadyBeepFrequencyHz.coerceAtLeast(1).toDouble()) / sampleRate.toDouble()
         var frame = 0
         while (frame < beepFrames) {
             val attackFrames = ((sampleRate * READY_BEEP_ATTACK_MS) / 1000).coerceAtLeast(1)
@@ -2236,7 +2242,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 else -> 1.0
             }.coerceIn(0.0, 1.0)
-            val sample = (sin(twoPiF * frame.toDouble()) * envelope * READY_BEEP_AMPLITUDE * Short.MAX_VALUE.toDouble())
+            val sample = (
+                sin(twoPiF * frame.toDouble()) *
+                    envelope *
+                    runtimeReadyBeepAmplitude.coerceIn(0.0, 1.0) *
+                    Short.MAX_VALUE.toDouble()
+                )
                 .toInt()
                 .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
             val offset = frame * 2
@@ -4220,7 +4231,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun buildReadyBeepWav(): ByteArray {
         val sampleRate = ROOT_PLAYBACK_SAMPLE_RATE
-        val sampleCount = ((sampleRate * READY_BEEP_DURATION_MS) / 1000).coerceAtLeast(1)
+        val sampleCount = ((sampleRate * runtimeReadyBeepDurationMs.coerceAtLeast(1)) / 1000).coerceAtLeast(1)
         val attackSamples = ((sampleRate * READY_BEEP_ATTACK_MS) / 1000).coerceAtLeast(1)
         val releaseSamples = ((sampleRate * READY_BEEP_RELEASE_MS) / 1000).coerceAtLeast(1)
         val releaseStart = (sampleCount - releaseSamples).coerceAtLeast(0)
@@ -4238,7 +4249,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 1.0
             }
             val envelope = attackEnv.coerceIn(0.0, 1.0) * releaseEnv
-            val sample = (sin(2.0 * PI * READY_BEEP_FREQUENCY_HZ * t) * READY_BEEP_AMPLITUDE * envelope * Short.MAX_VALUE.toDouble())
+            val sample = (
+                sin(2.0 * PI * runtimeReadyBeepFrequencyHz.coerceAtLeast(1) * t) *
+                    runtimeReadyBeepAmplitude.coerceIn(0.0, 1.0) *
+                    envelope *
+                    Short.MAX_VALUE.toDouble()
+                )
                 .toInt()
                 .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
             pcm[index * 2] = (sample and 0xFF).toByte()
@@ -4407,6 +4423,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runtimeAuditLevel = profile.auditLevel
             runtimeAuditTranscriptsEnabled = profile.auditTranscriptsEnabled
             runtimeAuditDebugWavEventsEnabled = profile.auditDebugWavEventsEnabled
+            runtimeEmbeddedReadyBeepEnabled = profile.embeddedReadyBeepEnabled
+            runtimeReadyBeepEveryTurn = profile.readyBeepEveryTurn
+            runtimeReadyBeepDurationMs = profile.readyBeepDurationMs
+            runtimeReadyBeepFrequencyHz = profile.readyBeepFrequencyHz
+            runtimeReadyBeepAmplitude = profile.readyBeepAmplitude
+            runtimeReadyBeepTailGapMs = profile.beepTailGapMs
+            readyBeepWavCache = null
             CommandAuditLog.configure(
                 level = runtimeAuditLevel,
                 transcriptEventsEnabled = runtimeAuditTranscriptsEnabled,
@@ -4463,6 +4486,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runtimeAuditLevel = DEFAULT_AUDIT_LOG_LEVEL
         runtimeAuditTranscriptsEnabled = DEFAULT_AUDIT_TRANSCRIPTS_ENABLED
         runtimeAuditDebugWavEventsEnabled = DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED
+        runtimeEmbeddedReadyBeepEnabled = ENABLE_EMBEDDED_READY_BEEP
+        runtimeReadyBeepEveryTurn = READY_BEEP_EVERY_TURN
+        runtimeReadyBeepDurationMs = READY_BEEP_DURATION_MS
+        runtimeReadyBeepFrequencyHz = READY_BEEP_FREQUENCY_HZ
+        runtimeReadyBeepAmplitude = READY_BEEP_AMPLITUDE
+        runtimeReadyBeepTailGapMs = READY_BEEP_TAIL_GAP_MS
+        readyBeepWavCache = null
         CommandAuditLog.configure(
             level = runtimeAuditLevel,
             transcriptEventsEnabled = runtimeAuditTranscriptsEnabled,
@@ -4529,6 +4559,26 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             ?: DEFAULT_AUDIT_TRANSCRIPTS_ENABLED
         val auditDebugWavEventsEnabled = auditRoot?.optBoolean("debug_wav_events_enabled", DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED)
             ?: DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED
+        val beepRoot = root.optJSONObject("beep")
+        val embeddedReadyBeepEnabled = when (beepRoot?.optString("mode")?.trim()?.lowercase(Locale.US)) {
+            "embedded_tail" -> true
+            "standalone" -> false
+            else -> ENABLE_EMBEDDED_READY_BEEP
+        }
+        val readyBeepEveryTurn = beepRoot?.optBoolean("every_turn", READY_BEEP_EVERY_TURN)
+            ?: READY_BEEP_EVERY_TURN
+        val readyBeepDurationMs = beepRoot?.optInt("duration_ms", READY_BEEP_DURATION_MS)
+            ?.takeIf { it > 0 }
+            ?: READY_BEEP_DURATION_MS
+        val readyBeepFrequencyHz = beepRoot?.optInt("frequency_hz", READY_BEEP_FREQUENCY_HZ)
+            ?.takeIf { it > 0 }
+            ?: READY_BEEP_FREQUENCY_HZ
+        val readyBeepAmplitude = beepRoot?.optDouble("amplitude", READY_BEEP_AMPLITUDE)
+            ?.takeIf { it.isFinite() && it >= 0.0 }
+            ?: READY_BEEP_AMPLITUDE
+        val beepTailGapMs = beepRoot?.optInt("tail_gap_ms", READY_BEEP_TAIL_GAP_MS)
+            ?.takeIf { it >= 0 }
+            ?: READY_BEEP_TAIL_GAP_MS
 
         if (playbackCandidates.isEmpty() || captureCandidates.isEmpty()) {
             return null
@@ -4546,6 +4596,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             auditLevel = auditLevel,
             auditTranscriptsEnabled = auditTranscriptsEnabled,
             auditDebugWavEventsEnabled = auditDebugWavEventsEnabled,
+            embeddedReadyBeepEnabled = embeddedReadyBeepEnabled,
+            readyBeepEveryTurn = readyBeepEveryTurn,
+            readyBeepDurationMs = readyBeepDurationMs,
+            readyBeepFrequencyHz = readyBeepFrequencyHz,
+            readyBeepAmplitude = readyBeepAmplitude,
+            beepTailGapMs = beepTailGapMs,
         )
     }
 
@@ -4590,6 +4646,12 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val auditLevel: CommandAuditLog.Level,
         val auditTranscriptsEnabled: Boolean,
         val auditDebugWavEventsEnabled: Boolean,
+        val embeddedReadyBeepEnabled: Boolean,
+        val readyBeepEveryTurn: Boolean,
+        val readyBeepDurationMs: Int,
+        val readyBeepFrequencyHz: Int,
+        val readyBeepAmplitude: Double,
+        val beepTailGapMs: Int,
     )
 
     private data class RootCaptureFrame(
