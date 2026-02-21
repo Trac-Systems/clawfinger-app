@@ -214,7 +214,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260222-capture-flow-cleanup-a")
+            Log.i(TAG, "build marker: 20260222-turn2-streamretry-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             if (!runtimeProfileLoaded) {
@@ -485,6 +485,13 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     CommandAuditLog.add("voice_bridge:first_turn_force_fallback")
                 }
                 if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
+                    val stateMachineRetryOnly = useStateMachine && lastRejectionReason == "utterance_empty"
+                    if (stateMachineRetryOnly) {
+                        CommandAuditLog.add("voice_bridge:state_machine_empty_retry")
+                        speaking.set(false)
+                        startCaptureLoop(NO_AUDIO_RETRY_DELAY_MS)
+                        return@execute
+                    }
                     if (strictStreamOnly) {
                         speaking.set(false)
                         startCaptureLoop(NO_AUDIO_RETRY_DELAY_MS)
