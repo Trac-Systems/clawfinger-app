@@ -210,7 +210,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260221-capture-softstart-a")
+            Log.i(TAG, "build marker: 20260221-capture-stability-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             speaking.set(false)
@@ -969,25 +969,28 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             val captured = readRootCaptureStreamChunk(streamSession, UTTERANCE_CAPTURE_CHUNK_MS)
             if (captured == null || captured.pcm.size < 2) {
                 consecutiveNoAudioRejects += 1
-                maybeRecoverRootRoute(
-                    force = false,
-                    reason = "utterance_stream_empty_chunk",
-                    noAudioStreak = consecutiveNoAudioRejects,
-                )
-                if (!speakingNow && fastEndpointMode && consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD) {
-                    stopRootCaptureStreamSession("fast_post_playback_rebind_$consecutiveNoAudioRejects")
-                    if (consecutiveNoAudioRejects >= fastPostPlaybackStreamUnpinThreshold()) {
-                        resetRootCapturePin("fast_post_playback_no_audio_$consecutiveNoAudioRejects")
+                val allowNoAudioRecovery = speakingNow || elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS
+                if (allowNoAudioRecovery) {
+                    maybeRecoverRootRoute(
+                        force = false,
+                        reason = "utterance_stream_empty_chunk",
+                        noAudioStreak = consecutiveNoAudioRejects,
+                    )
+                    if (!speakingNow && fastEndpointMode && consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD) {
+                        stopRootCaptureStreamSession("fast_post_playback_rebind_$consecutiveNoAudioRejects")
+                        if (consecutiveNoAudioRejects >= fastPostPlaybackStreamUnpinThreshold()) {
+                            resetRootCapturePin("fast_post_playback_no_audio_$consecutiveNoAudioRejects")
+                        }
                     }
-                }
-                if (consecutiveNoAudioRejects >= ROOT_CAPTURE_STREAM_RESTART_THRESHOLD) {
-                    stopRootCaptureStreamSession("stream_timeout_$consecutiveNoAudioRejects")
-                }
-                if (consecutiveNoAudioRejects >= noAudioUnpinThreshold()) {
-                    resetRootCapturePin("utterance_stream_no_audio_$consecutiveNoAudioRejects")
-                }
-                if (consecutiveNoAudioRejects >= rootCaptureSourceRotateThreshold()) {
-                    rotateRootCaptureSource()
+                    if (consecutiveNoAudioRejects >= ROOT_CAPTURE_STREAM_RESTART_THRESHOLD) {
+                        stopRootCaptureStreamSession("stream_timeout_$consecutiveNoAudioRejects")
+                    }
+                    if (consecutiveNoAudioRejects >= noAudioUnpinThreshold()) {
+                        resetRootCapturePin("utterance_stream_no_audio_$consecutiveNoAudioRejects")
+                    }
+                    if (consecutiveNoAudioRejects >= rootCaptureSourceRotateThreshold()) {
+                        rotateRootCaptureSource()
+                    }
                 }
                 if (speakingNow) {
                     silenceSamples += (sampleRate * UTTERANCE_CAPTURE_CHUNK_MS) / 1000
