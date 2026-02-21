@@ -5472,7 +5472,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val PROFILE_ACTIVE_FILE = "profile.json"
         private const val PROFILE_LEGACY_ACTIVE_FILE = "active-profile.json"
         private const val ENABLE_ROOT_CAPTURE_AUTOCALIBRATION = true
-        private const val ENABLE_ROOT_PLAYBACK_AUTOCALIBRATION = true
+        private const val ENABLE_ROOT_PLAYBACK_AUTOCALIBRATION = false
         private const val ENABLE_ROOT_CALL_ROUTE_PROFILE = true
         private const val STRICT_REMOTE_AUDIO_ONLY = false
         private const val ENABLE_LOCAL_CLARIFICATION_TTS = false
