@@ -37,7 +37,12 @@
     ]
   },
   "playback": {
-    "candidate_order_in_app": [29, 23, 18, 19],
+    "candidate_order_in_app": [
+      29,
+      23,
+      18,
+      19
+    ],
     "tuning": {
       "persistent_session": false,
       "lock_device_for_call": true,
@@ -61,20 +66,33 @@
     }
   },
   "capture": {
-    "candidate_order_in_app": [20, 21, 22, 54],
+    "candidate_order_in_app": [
+      20,
+      21,
+      22,
+      54
+    ],
     "endpoint_settings": {
       "20": {
-        "request_sample_rate": 48000,
-        "effective_sample_rate": 24000,
-        "request_channels": 2
+        "request_sample_rate": 24000,
+        "effective_sample_rate": 11025,
+        "request_channels": 1
       },
       "21": {
-        "request_sample_rate": 48000,
-        "effective_sample_rate": 24000,
-        "request_channels": 2
+        "request_sample_rate": 24000,
+        "effective_sample_rate": 11025,
+        "request_channels": 1
       },
-      "22": {},
-      "54": {}
+      "22": {
+        "request_sample_rate": 24000,
+        "effective_sample_rate": 11025,
+        "request_channels": 1
+      },
+      "54": {
+        "request_sample_rate": 24000,
+        "effective_sample_rate": 11025,
+        "request_channels": 1
+      }
     },
     "tuning": {
       "strict_stream_only": false
