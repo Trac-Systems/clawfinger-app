@@ -3445,3 +3445,38 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 04:34 — Added per-call capture auto-calibration + route-recovery re-probe
+
+### What
+- Implemented root capture auto-calibration in `SparkCallAssistantService.kt`:
+  - new `ensureRootCaptureCalibrated(reason, force)` flow
+  - per-call calibration state (`rootCaptureCalibratedForCall`)
+  - calibration throttle/in-flight guard.
+- Wired calibration into key lifecycle points:
+  - service start route setup
+  - explicit route reapply action
+  - route recovery path
+  - turn start and utterance state-machine entry.
+- Added calibration floor guard in root probe:
+  - reject probe result if RMS is below `ROOT_CAPTURE_CALIBRATION_MIN_RMS`.
+- Reset calibration state on source unpin/rotation and service teardown so next turn can re-probe.
+- Extended plan with production reliability gates in `PLAN.md`.
+
+### Why
+- Playback route drift and capture drift are symmetric failures on this device family.
+- Without per-call capture lock + controlled re-probe, the app can select a stale/weak capture source after route churn, producing clipped/incorrect ASR.
+- Productization requires deterministic reliability gates, not ad-hoc manual checks.
+
+### Result
+- Capture path now actively calibrates and pins a source per call and re-calibrates after route churn.
+- Calibration behavior is now auditable through command log entries (`voice_bridge:capture_calibration:*`).
+
+### Validation
+- `cd app-android && ./gradlew :app:assembleDebug` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+### Next
+1. Run live call E2E to verify capture calibration convergence across first 3 turns.
+2. Add a scripted reliability run (multi-call soak + route reapply churn) and gate release on pass.
+3. Implement automatic playback-route calibration with the same lock+reprobe discipline.

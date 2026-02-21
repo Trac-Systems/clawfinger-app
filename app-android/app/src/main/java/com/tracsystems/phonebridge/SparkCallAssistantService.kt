@@ -90,6 +90,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var startupRecoveryActive = false
     @Volatile
     private var rootCapturePinned = false
+    @Volatile
+    private var rootCaptureCalibratedForCall = false
+    private val rootCaptureCalibrationInFlight = AtomicBoolean(false)
+    private val lastRootCaptureCalibrationAtMs = AtomicLong(0L)
     private val silenceWatchdog = object : Runnable {
         override fun run() {
             if (!serviceActive.get()) {
@@ -140,6 +144,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 val reason = intent.getStringExtra(EXTRA_ROUTE_REAPPLY_REASON).orEmpty().ifBlank { "manual" }
                 Thread({
                     applyRootCallRouteProfile()
+                    ensureRootCaptureCalibrated(reason = "route_reapply:$reason", force = true)
                     CommandAuditLog.add("root:route_reapply:$reason")
                 }, "pb-root-route-reapply").start()
             }
@@ -171,6 +176,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runCatching { turnVad?.close() }
             turnVad = null
             rootCapturePinned = false
+            rootCaptureCalibratedForCall = false
             forceFallbackTurnsRemaining = FIRST_TURNS_FORCE_FALLBACK
             startupRecoveryActive = ENABLE_STARTUP_CAPTURE_RECOVERY
             fallbackPromptAtMs.set(0L)
@@ -187,6 +193,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             Thread({
                 applyRootCallRouteProfile()
+                ensureRootCaptureCalibrated(reason = "service_start_route_set", force = true)
                 CommandAuditLog.add("root:route_set_async:done")
             }, "pb-root-route").start()
         }
@@ -209,6 +216,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runCatching { turnVad?.close() }
         turnVad = null
         startupRecoveryActive = false
+        rootCaptureCalibratedForCall = false
         restoreRootCallRouteProfile()
         networkExecutor.shutdownNow()
         CommandAuditLog.add("voice_bridge:stop")
@@ -354,6 +362,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
                     return@execute
                 }
+                ensureRootCaptureCalibrated(reason = "turn_start", force = false)
                 var transcriptPreview = ""
                 var transcriptAudioWav: ByteArray? = null
                 var transcriptChunkCount = 0
@@ -785,6 +794,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (!ENABLE_ROOT_PCM_BRIDGE) {
             return null
         }
+        ensureRootCaptureCalibrated(reason = "utterance_state", force = false)
         var preRoll = ByteArray(0)
         val current = ByteArrayOutputStream()
         var speakingNow = false
@@ -1492,6 +1502,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             RootProbeResult(source = source, rms = rms)
         }
         val best = probeResults.maxByOrNull { it.rms } ?: return null
+        if (best.rms < ROOT_CAPTURE_CALIBRATION_MIN_RMS) {
+            Log.w(
+                TAG,
+                "audio root probe rejected (calibration floor, best=${best.rms})",
+            )
+            return null
+        }
         if (STRICT_REMOTE_AUDIO_ONLY && best.rms < MIN_PROBE_ACCEPT_RMS) {
             Log.w(
                 TAG,
@@ -1719,6 +1736,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         Thread({
             applyRootCallRouteProfile()
+            ensureRootCaptureCalibrated(reason = "route_recover", force = true)
             CommandAuditLog.add("root:route_recover:done")
         }, "pb-root-route-recover").start()
     }
@@ -1741,6 +1759,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             stopRootCaptureStreamSession("rotate_source")
         }
         selectedRootCaptureSource = next
+        rootCaptureCalibratedForCall = false
         CommandAuditLog.add("voice_bridge:root_source_rotate:${next.name}")
     }
 
@@ -1752,6 +1771,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             return
         }
         rootCapturePinned = false
+        rootCaptureCalibratedForCall = false
         selectedRootCaptureSampleRate = null
         selectedRootCaptureChannels = null
         stopRootCaptureStreamSession("unpin:$reason")
@@ -1765,8 +1785,52 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         val source = selectedRootCaptureSource ?: return
         rootCapturePinned = true
+        rootCaptureCalibratedForCall = true
         CommandAuditLog.add("voice_bridge:root_source_pinned:${source.name}")
         Log.i(TAG, "root capture source pinned: ${source.name}(${source.device})")
+    }
+
+    private fun ensureRootCaptureCalibrated(reason: String, force: Boolean) {
+        if (!ENABLE_ROOT_PCM_BRIDGE || !ENABLE_ROOT_CAPTURE_AUTOCALIBRATION) {
+            return
+        }
+        if (!InCallStateHolder.hasLiveCall()) {
+            return
+        }
+        if (!force && rootCaptureCalibratedForCall) {
+            return
+        }
+        val now = System.currentTimeMillis()
+        val last = lastRootCaptureCalibrationAtMs.get()
+        if (!force && now - last < ROOT_CAPTURE_CALIBRATION_THROTTLE_MS) {
+            return
+        }
+        if (!rootCaptureCalibrationInFlight.compareAndSet(false, true)) {
+            return
+        }
+        try {
+            lastRootCaptureCalibrationAtMs.set(now)
+            val preferredRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+            val best = probeBestRootCaptureSource(preferredRate)
+            if (best == null) {
+                rootCaptureCalibratedForCall = false
+                CommandAuditLog.add("voice_bridge:capture_calibration:none:$reason")
+                return
+            }
+            val previousDevice = selectedRootCaptureSource?.device
+            selectedRootCaptureSource = best
+            selectedRootCaptureSampleRate = ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+            selectedRootCaptureChannels = 1
+            if (previousDevice != best.device || rootCaptureStreamSession?.device != best.device) {
+                stopRootCaptureStreamSession("capture_calibration:$reason")
+            }
+            rootCapturePinned = true
+            rootCaptureCalibratedForCall = true
+            CommandAuditLog.add("voice_bridge:capture_calibration:${best.name}:$reason")
+            Log.i(TAG, "root capture calibrated source=${best.name}(${best.device}) reason=$reason")
+        } finally {
+            rootCaptureCalibrationInFlight.set(false)
+        }
     }
 
     private fun persistDebugWav(prefix: String, wavBytes: ByteArray?, hint: String = ""): String? {
@@ -4099,6 +4163,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val PROBE_CAPTURE_MS = 480
         private const val ENABLE_ROOT_BOOTSTRAP = true
         private const val ENABLE_ROOT_PCM_BRIDGE = true
+        private const val ENABLE_ROOT_CAPTURE_AUTOCALIBRATION = true
         private const val ENABLE_ROOT_CALL_ROUTE_PROFILE = true
         private const val STRICT_REMOTE_AUDIO_ONLY = false
         private const val ENABLE_LOCAL_CLARIFICATION_TTS = false
@@ -4165,6 +4230,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_PLAY_START_TIMEOUT_MS = 2_500L
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
         private const val ROOT_ROUTE_RECOVER_THROTTLE_MS = 1_800L
+        private const val ROOT_CAPTURE_CALIBRATION_THROTTLE_MS = 1_600L
+        private const val ROOT_CAPTURE_CALIBRATION_MIN_RMS = 10.0
         private const val ROOT_PLAYBACK_SAMPLE_RATE = 48_000
         private const val ENABLE_BARGE_IN_INTERRUPT = true
         private const val BARGE_IN_ARM_DELAY_MS = 80L

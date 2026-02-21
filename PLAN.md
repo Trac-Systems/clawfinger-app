@@ -91,6 +91,15 @@ V2 is accepted only if all pass:
 4. Multi-turn call survives at least 8 turns without deadlock.
 5. The model’s responses remain semantically aligned with user transcripts.
 
+## 4.1) Production reliability gates (new)
+Before rollout, enforce all gates below:
+1. **Route calibration gate**: per-call capture endpoint lock succeeds on call start and after route-reapply events.
+2. **Audio integrity gate**: first 3 turns in every call have no pitch drift and no leading-edge clipping.
+3. **Conversational gate**: at least 20 consecutive turns complete without assistant deadlock or silent turn loss.
+4. **Stress gate**: 100-call soak with mixed call lengths, including overlap speech and one-word turns.
+5. **Recovery gate**: forced route churn/rebind/reboot scenarios recover automatically without manual intervention.
+6. **Release gate**: app build is blocked unless automated unit/integration checks pass and manual carrier E2E checklist is green.
+
 ## 5) Reference material used
 - Android audio playback capture constraints and usage limitations:
   - https://developer.android.com/reference/android/media/AudioPlaybackCaptureConfiguration
