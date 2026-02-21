@@ -740,6 +740,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             startCaptureLoop(delayMs)
             return
         }
+        if (!READY_BEEP_EVERY_TURN && !reason.startsWith("greeting")) {
+            startCaptureLoop(delayMs)
+            return
+        }
         mainHandler.postDelayed({
             if (!serviceActive.get() || !InCallStateHolder.hasLiveCall()) {
                 return@postDelayed
@@ -4421,6 +4425,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val READY_BEEP_AMPLITUDE = 0.18
         private const val READY_BEEP_ATTACK_MS = 10
         private const val READY_BEEP_RELEASE_MS = 20
+        private const val READY_BEEP_EVERY_TURN = false
         private const val READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS = 60L
         private const val CAPTURE_RETRY_DELAY_MS = 120L
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L

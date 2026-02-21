@@ -3557,3 +3557,22 @@ _Last updated: 2026-02-19_
 ### Next
 1. Run a live call to confirm beep is consistent and post-reply pickup remains stable.
 2. If residual choppiness persists, reduce/disable ready beep for non-greeting turns only.
+
+## 2026-02-21 06:00 — Reduced turn-level audio contention by limiting ready beep scope
+
+### What
+- Kept ready beep enabled, but changed scope to greeting-only:
+  - `READY_BEEP_EVERY_TURN = false`
+  - `startCaptureLoopWithReadyCue(...)` now skips beep for non-greeting reasons and starts capture directly.
+
+### Why
+- Per-turn beep playback introduced an extra tinyplay launch between assistant turns and user capture.
+- On this device path, that extra playback window increases audible chopping risk.
+
+### Result
+- Greeting still has a readiness cue.
+- Normal multi-turn flow no longer injects extra beep playback between turns.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
