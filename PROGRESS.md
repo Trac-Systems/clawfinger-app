@@ -3596,3 +3596,17 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:03 — Reverted playback rate override (pitch regression fix)
+
+### What
+- Reverted playback sample-rate override for endpoints `29/23` back to `48000`.
+- Kept larger tinyplay period buffering (`-p 1024 -n 8`) from previous step.
+
+### Why
+- Lowering 29/23 to `32000` caused immediate high-pitch regression on the live device path.
+- This confirms endpoint route currently expects the prior 48k mapping for correct voice pitch.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
