@@ -3405,3 +3405,22 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 03:45 — Fix regression: greeting fallback no-audio stall in root mode
+
+### What
+- Fixed app-only greeting fallback behavior in root playback mode.
+- Root cause: when model greeting was non-compliant, app forced exact local greeting text path, but local TTS is disabled in root mode, causing no audible greeting and potential turn stall.
+- Updated greeting selection logic:
+  - use exact local fallback only when local TTS is available;
+  - otherwise keep backend greeting/audio path.
+- Added guard in main-thread TTS path:
+  - if `tts == null`, log warning and immediately resume capture loop instead of stalling.
+
+### Why
+- User reported no greeting and no turns after latest app-only greeting change.
+- This restores call flow while keeping app-only strict greeting fallback where technically possible.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
