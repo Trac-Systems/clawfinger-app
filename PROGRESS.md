@@ -3383,3 +3383,21 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 03:57 — Fix startup route race causing silent greeting/first turn
+
+### What
+- Moved call-route profile application to happen before greeting/capture startup at service start.
+- Replaced previous "route apply async in parallel" pattern with "route-first then start":
+  - start thread `pb-root-route-start`
+  - `applyRootCallRouteProfile()`
+  - then start greeting (`requestGreeting`) or capture loop.
+- Removed prior path that could start greeting before route profile was applied.
+
+### Why
+- Logs showed greeting path running while route application was still racing.
+- Symptom matched user report: no greeting/no turn even though service started and tinyplay executed.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.

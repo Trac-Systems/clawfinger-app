@@ -180,15 +180,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             enforceCallMute()
             markSpeechActivity("service_start")
             startSilenceWatchdog()
-            if (SEND_GREETING_ON_CONNECT) {
-                requestGreeting()
-            } else {
-                startCaptureLoop(40)
-            }
             Thread({
                 applyRootCallRouteProfile()
-                CommandAuditLog.add("root:route_set_async:done")
-            }, "pb-root-route").start()
+                CommandAuditLog.add("root:route_set_before_start:done")
+                if (!serviceActive.get()) return@Thread
+                if (SEND_GREETING_ON_CONNECT) {
+                    requestGreeting()
+                } else {
+                    startCaptureLoop(40)
+                }
+            }, "pb-root-route-start").start()
         }
         return START_STICKY
     }
