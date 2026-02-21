@@ -2063,6 +2063,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     device = device,
                     sampleRate = playbackRate,
                 )
+                Log.i(TAG, "root tinyplay launch device=$device rate=$playbackRate")
                 runCatching { wavFile.delete() }
                 if (pid == null) {
                     continue
@@ -4542,8 +4543,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
         private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(29, 23, 18, 19)
         private val ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = mapOf(
-            29 to 32_000,
-            23 to 32_000,
+            29 to 48_000,
+            23 to 48_000,
         )
         private val ROOT_BOOTSTRAP_COMMANDS = listOf(
             "echo /data/adb/ap/bin/su > /data/adb/ap/su_path",
