@@ -2243,10 +2243,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         rootPlaybackProfileLockedForCall = runtimeRootPlaybackLockDeviceForCall
                         return playbackResult
                     }
-                    if (lockDeviceForCall) {
-                        break
-                    }
-                    continue
+                    CommandAuditLog.add("voice_bridge:root_persistent_fallback_to_file:$device")
+                    Log.w(TAG, "persistent playback failed on device=$device, falling back to one-shot tinyplay")
                 }
                 val playbackTimeoutMs = (playbackDurationMs + ROOT_PLAYBACK_TIMEOUT_MARGIN_MS)
                     .coerceIn(ROOT_PLAY_TIMEOUT_MIN_MS, ROOT_PLAY_TIMEOUT_MAX_MS)
@@ -4676,13 +4674,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (!ENABLE_PROFILE_JSON_LOADING) {
             return
         }
-        val profileFile = resolveRuntimeProfileFile() ?: return
+        val profileFile = resolveRuntimeProfileFile()
+        if (profileFile == null) {
+            Log.w(TAG, "runtime PCM profile not found; using defaults")
+            CommandAuditLog.add("voice_bridge:profile:not_found")
+            return
+        }
         runCatching {
             val jsonText = profileFile.readText()
             parseRuntimePcmProfile(jsonText)
         }.onSuccess { profile ->
             if (profile == null) {
                 CommandAuditLog.add("voice_bridge:profile:parse_none:${profileFile.absolutePath}")
+                Log.w(TAG, "runtime PCM profile parse returned null for ${profileFile.absolutePath}; using defaults")
                 return@onSuccess
             }
             runtimeRootSuPath = profile.rootSuPath
@@ -4756,7 +4760,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             )
             Log.i(
                 TAG,
-                "runtime PCM profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }})",
+                "runtime PCM profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }}, persistent=${runtimeRootPlaybackPersistentSession})",
             )
         }.onFailure { error ->
             CommandAuditLog.add("voice_bridge:profile:load_error:${error.message?.take(80)}")
@@ -5414,7 +5418,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_PLAY_TIMEOUT_MAX_MS = 90_000L
         private const val ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 2_500L
         private const val ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS = 180
-        private const val ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION = true
+        private const val ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION = false
         private const val ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL = true
         private const val ROOT_PLAYBACK_RETRY_ON_TIMEOUT = false
         private const val ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED = true

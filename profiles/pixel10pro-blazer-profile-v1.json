@@ -52,7 +52,7 @@
       "notes": "Validated as audible/usable on remote call path in this profile"
     },
     "tuning": {
-      "persistent_session": true,
+      "persistent_session": false,
       "lock_device_for_call": true,
       "prebuffer_ms": 220
     },

@@ -3975,3 +3975,32 @@ _Last updated: 2026-02-19_
 - Updated profile pushed via `./scripts/android-push-profile.sh`.
 - Device profile file verified with new tuning fields at:
   - `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`
+
+## 2026-02-21 17:30 — Root-cause fix for silent greeting after playback changes
+
+### Root cause identified
+- Greeting silence was not due to PCM endpoint/channel mismatch.
+- Logcat showed SELinux AVC denies when app attempted FIFO writes in persistent playback path:
+  - `avc: denied { write } ... tclass=fifo_file ... pb-rootplay-stream-...`
+  - `avc: denied { unlink } ... pb-rootplay-stream-...`
+- That blocked persistent FIFO playback before any `root tinyplay launch`, resulting in no greeting.
+
+### Fix implemented
+- Added robust fallback: if persistent playback path fails, immediately fallback to one-shot file-based `tinyplay` for same reply.
+- Added profile-loading diagnostics in logcat:
+  - explicit warning if profile missing,
+  - explicit warning if profile parse returns null.
+- Set default persistent-playback flag to `false` in app constants (profile can still enable it explicitly).
+- Kept tuning profile-driven (period size/count/mmap + tuning object still parsed).
+
+### Profile state
+- `profiles/pixel10pro-blazer-profile-v1.json` keeps:
+  - `playback.tuning.persistent_session = false`
+  - `playback.tuning.lock_device_for_call = true`
+  - `playback.tuning.prebuffer_ms = 220`
+
+### Validation actions
+- Rebuilt APK.
+- Reinstalled APK.
+- Re-pushed profile to `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`.
+- Force-stopped app so next call reloads profile.
