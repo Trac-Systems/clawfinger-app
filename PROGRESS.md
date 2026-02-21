@@ -4090,3 +4090,19 @@ _Last updated: 2026-02-19_
 ### Why this is needed
 - Keeps tuned PCM profile available even when one storage path is transient/unavailable.
 - Reduces default-profile startups that lead to silent/no-greeting behavior.
+
+## 2026-02-21 18:22 — Added deterministic playback-duration telemetry (no-behavior change)
+
+### Purpose
+- Stop guessing on greeting audibility failures.
+- Verify whether tinyplay exits almost immediately (blip) vs full expected playback duration.
+
+### Change
+- In `monitorRootPlayback(...)`, log and audit actual playback time on success/forced-stop:
+  - `root tinyplay ok ... playedMs=<x> expectedMs=<y>`
+  - `voice_bridge:root_playback_ok:d<device>:ms=<x>:exp=<y>`
+  - same for forced stop.
+
+### Why
+- If `playedMs << expectedMs`, issue is render/format path.
+- If `playedMs ~= expectedMs` but remote hears nothing, issue is route-to-remote leg, not LLM or local synthesis.

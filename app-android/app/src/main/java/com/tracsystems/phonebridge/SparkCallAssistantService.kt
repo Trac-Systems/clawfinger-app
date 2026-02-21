@@ -2688,13 +2688,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
             }
             if (!isRootProcessAlive(pid)) {
-                Log.i(TAG, "root tinyplay ok device=$device")
+                val elapsedMs = (now - startedAt).coerceAtLeast(0L)
+                Log.i(TAG, "root tinyplay ok device=$device playedMs=$elapsedMs expectedMs=$expectedDurationMs")
+                CommandAuditLog.add("voice_bridge:root_playback_ok:d$device:ms=$elapsedMs:exp=$expectedDurationMs")
                 markSpeechActivity("root_playback:$device")
                 return RootPlaybackResult(played = true, interrupted = false)
             }
             if (now >= expectedStopAt) {
                 stopRootPlaybackProcess(pid)
-                Log.i(TAG, "root tinyplay forced-stop at expected end device=$device")
+                val elapsedMs = (now - startedAt).coerceAtLeast(0L)
+                Log.i(TAG, "root tinyplay forced-stop at expected end device=$device playedMs=$elapsedMs expectedMs=$expectedDurationMs")
+                CommandAuditLog.add("voice_bridge:root_playback_forced:d$device:ms=$elapsedMs:exp=$expectedDurationMs")
                 markSpeechActivity("root_playback_forced:$device")
                 return RootPlaybackResult(played = true, interrupted = false)
             }
