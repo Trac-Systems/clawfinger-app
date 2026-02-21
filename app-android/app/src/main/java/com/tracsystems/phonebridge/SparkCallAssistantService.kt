@@ -44,9 +44,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlin.math.sin
 import kotlin.math.sqrt
-import kotlin.math.PI
 
 class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val networkExecutor = Executors.newSingleThreadExecutor()
@@ -79,8 +77,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val callMuteEnforced = AtomicBoolean(false)
     private val lastSpeechActivityAtMs = AtomicLong(0L)
     private val lastPlaybackEndedAtMs = AtomicLong(0L)
-    private val lastReadyCueAtMs = AtomicLong(0L)
-    private var readyBeepWavCache: ByteArray? = null
     private val rootBootstrapInFlight = AtomicBoolean(false)
     @Volatile
     private var rootBootstrapDone = false
@@ -180,16 +176,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             enforceCallMute()
             markSpeechActivity("service_start")
             startSilenceWatchdog()
+            if (SEND_GREETING_ON_CONNECT) {
+                requestGreeting()
+            } else {
+                startCaptureLoop(40)
+            }
             Thread({
                 applyRootCallRouteProfile()
-                CommandAuditLog.add("root:route_set_before_start:done")
-                if (!serviceActive.get()) return@Thread
-                if (SEND_GREETING_ON_CONNECT) {
-                    requestGreeting()
-                } else {
-                    startCaptureLoop(40)
-                }
-            }, "pb-root-route-start").start()
+                CommandAuditLog.add("root:route_set_async:done")
+            }, "pb-root-route").start()
         }
         return START_STICKY
     }
@@ -279,9 +274,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         networkExecutor.execute {
             val response = runCatching {
                 callSparkTurn(
-                    transcript = "Output exactly this and nothing else: Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead.",
+                    transcript = "Greet the caller in one short sentence.",
                     audioWav = buildSilenceWav(),
-                    resetSession = true,
                 )
             }.onFailure { error ->
                 Log.e(TAG, "spark greeting failed", error)
@@ -311,19 +305,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 CommandAuditLog.add("voice_bridge:greeting_root:${reply.take(96)}")
                 speaking.set(false)
                 lastPlaybackEndedAtMs.set(System.currentTimeMillis())
-                startCaptureLoopWithReadyCue(
-                    delayMs = POST_PLAYBACK_CAPTURE_DELAY_MS,
-                    reason = "greeting_played",
-                )
+                startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
                 return@execute
             }
             if (rootPlayback.interrupted) {
                 CommandAuditLog.add("voice_bridge:greeting_barge_in")
                 speaking.set(false)
-                startCaptureLoopWithReadyCue(
-                    delayMs = BARGE_IN_RESUME_DELAY_MS,
-                    reason = "greeting_interrupted",
-                )
+                startCaptureLoop(BARGE_IN_RESUME_DELAY_MS)
                 return@execute
             }
             if (ENABLE_ROOT_PCM_BRIDGE) {
@@ -656,10 +644,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     markSpeechActivity("root_reply_played")
                     speaking.set(false)
                     lastPlaybackEndedAtMs.set(System.currentTimeMillis())
-                    startCaptureLoopWithReadyCue(
-                        delayMs = POST_PLAYBACK_CAPTURE_DELAY_MS,
-                        reason = "reply_played",
-                    )
+                    startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
                     return@execute
                 }
                 if (rootPlayback.interrupted) {
@@ -667,10 +652,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     lastAssistantReplyText = cleanReply
                     markSpeechActivity("root_reply_interrupted")
                     speaking.set(false)
-                    startCaptureLoopWithReadyCue(
-                        delayMs = BARGE_IN_RESUME_DELAY_MS,
-                        reason = "reply_interrupted",
-                    )
+                    startCaptureLoop(BARGE_IN_RESUME_DELAY_MS)
                     return@execute
                 }
                 if (ENABLE_ROOT_PCM_BRIDGE) {
@@ -710,43 +692,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Log.i(TAG, "capture loop tick")
             requestReplyFromAudioFallback()
         }, delayMs)
-    }
-
-    private fun startCaptureLoopWithReadyCue(delayMs: Long, reason: String) {
-        startCaptureLoop(delayMs)
-        Thread({
-            maybePlayReadyBeepCue(reason)
-        }, "pb-ready-beep").start()
-    }
-
-    private fun maybePlayReadyBeepCue(reason: String) {
-        if (!ENABLE_READY_BEEP_CUE || !ENABLE_ROOT_PCM_BRIDGE) {
-            return
-        }
-        if (!InCallStateHolder.hasLiveCall()) {
-            return
-        }
-        val now = System.currentTimeMillis()
-        val last = lastReadyCueAtMs.get()
-        if (now - last < READY_BEEP_MIN_INTERVAL_MS) {
-            return
-        }
-        if (!lastReadyCueAtMs.compareAndSet(last, now)) {
-            return
-        }
-        val wavBytes = readyBeepWavCache ?: buildReadyBeepWav().also { readyBeepWavCache = it }
-        val result = playReplyViaRootPcm(
-            audioWavBase64 = Base64.getEncoder().encodeToString(wavBytes),
-            replyTextForEcho = null,
-            enableBargeInInterrupt = false,
-        )
-        if (result.played) {
-            CommandAuditLog.add("voice_bridge:ready_beep:$reason")
-            Log.i(TAG, "ready beep played: $reason")
-        } else {
-            CommandAuditLog.add("voice_bridge:ready_beep_fail:$reason")
-            Log.w(TAG, "ready beep failed: $reason")
-        }
     }
 
     private fun noAudioUnpinThreshold(): Int {
@@ -2986,22 +2931,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return json.optString("transcript", "")
     }
 
-    private fun callSparkTurn(
-        transcript: String?,
-        audioWav: ByteArray?,
-        skipAsr: Boolean = false,
-        resetSession: Boolean = false,
-    ): SparkTurnResponse {
-        if (resetSession) {
-            sessionId = null
-        }
+    private fun callSparkTurn(transcript: String?, audioWav: ByteArray?, skipAsr: Boolean = false): SparkTurnResponse {
         if (ENABLE_SPARK_TURN_STREAM) {
             val streamResult = runCatching {
                 callSparkTurnStream(
                     transcript = transcript,
                     audioWav = audioWav,
                     skipAsr = skipAsr,
-                    resetSession = resetSession,
                 )
             }.onFailure { error ->
                 Log.w(TAG, "spark stream turn failed, falling back to json endpoint", error)
@@ -3017,16 +2953,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             transcript = transcript,
             audioWav = audioWav,
             skipAsr = skipAsr,
-            resetSession = resetSession,
         )
     }
 
-    private fun callSparkTurnJson(
-        transcript: String?,
-        audioWav: ByteArray?,
-        skipAsr: Boolean = false,
-        resetSession: Boolean = false,
-    ): SparkTurnResponse {
+    private fun callSparkTurnJson(transcript: String?, audioWav: ByteArray?, skipAsr: Boolean = false): SparkTurnResponse {
         val boundary = "----PhoneBridge${System.currentTimeMillis()}"
         val url = URL("${SparkConfig.baseUrl}/api/turn")
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -3042,7 +2972,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
         }
         DataOutputStream(connection.outputStream).use { out ->
-            writeFormField(out, boundary, "reset_session", if (resetSession) "true" else "false")
+            writeFormField(out, boundary, "reset_session", "false")
             sessionId?.let { writeFormField(out, boundary, "session_id", it) }
             if (!transcript.isNullOrBlank()) {
                 writeFormField(out, boundary, "transcript_hint", transcript)
@@ -3073,12 +3003,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
-    private fun callSparkTurnStream(
-        transcript: String?,
-        audioWav: ByteArray?,
-        skipAsr: Boolean = false,
-        resetSession: Boolean = false,
-    ): SparkTurnResponse {
+    private fun callSparkTurnStream(transcript: String?, audioWav: ByteArray?, skipAsr: Boolean = false): SparkTurnResponse {
         val boundary = "----PhoneBridgeStream${System.currentTimeMillis()}"
         val url = URL("${SparkConfig.baseUrl}/api/turn/stream")
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -3094,7 +3019,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
         }
         DataOutputStream(connection.outputStream).use { out ->
-            writeFormField(out, boundary, "reset_session", if (resetSession) "true" else "false")
+            writeFormField(out, boundary, "reset_session", "false")
             sessionId?.let { writeFormField(out, boundary, "session_id", it) }
             if (!transcript.isNullOrBlank()) {
                 writeFormField(out, boundary, "transcript_hint", transcript)
@@ -3774,35 +3699,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return wav
     }
 
-    private fun buildReadyBeepWav(): ByteArray {
-        val sampleRate = ROOT_PLAYBACK_SAMPLE_RATE
-        val sampleCount = ((sampleRate * READY_BEEP_DURATION_MS) / 1000).coerceAtLeast(1)
-        val attackSamples = ((sampleRate * READY_BEEP_ATTACK_MS) / 1000).coerceAtLeast(1)
-        val releaseSamples = ((sampleRate * READY_BEEP_RELEASE_MS) / 1000).coerceAtLeast(1)
-        val releaseStart = (sampleCount - releaseSamples).coerceAtLeast(0)
-        val pcm = ByteArray(sampleCount * 2)
-        for (index in 0 until sampleCount) {
-            val t = index.toDouble() / sampleRate.toDouble()
-            val attackEnv = if (index < attackSamples) {
-                index.toDouble() / attackSamples.toDouble()
-            } else {
-                1.0
-            }
-            val releaseEnv = if (index >= releaseStart) {
-                ((sampleCount - index).toDouble() / (sampleCount - releaseStart).toDouble()).coerceIn(0.0, 1.0)
-            } else {
-                1.0
-            }
-            val envelope = attackEnv.coerceIn(0.0, 1.0) * releaseEnv
-            val sample = (sin(2.0 * PI * READY_BEEP_FREQUENCY_HZ * t) * READY_BEEP_AMPLITUDE * envelope * Short.MAX_VALUE.toDouble())
-                .toInt()
-                .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-            pcm[index * 2] = (sample and 0xFF).toByte()
-            pcm[index * 2 + 1] = ((sample shr 8) and 0xFF).toByte()
-        }
-        return pcm16ToWav(pcm, sampleRate)
-    }
-
     private fun pcm16ToWav(pcm: ByteArray, sampleRate: Int): ByteArray {
         val channels = 1
         val bitsPerSample = 16
@@ -4059,13 +3955,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val NOTIFICATION_ID = 4501
         private const val SILENCE_HANGUP_MS = 90_000L
         private const val SILENCE_CHECK_INTERVAL_MS = 1_000L
-        private const val ENABLE_READY_BEEP_CUE = true
-        private const val READY_BEEP_MIN_INTERVAL_MS = 320L
-        private const val READY_BEEP_DURATION_MS = 95
-        private const val READY_BEEP_FREQUENCY_HZ = 1320
-        private const val READY_BEEP_AMPLITUDE = 0.18
-        private const val READY_BEEP_ATTACK_MS = 10
-        private const val READY_BEEP_RELEASE_MS = 20
         private const val CAPTURE_RETRY_DELAY_MS = 120L
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
         private const val NO_AUDIO_RETRY_DELAY_MS = 450L

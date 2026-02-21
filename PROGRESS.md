@@ -3401,3 +3401,16 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 03:59 — Restore pre-instruction baseline behavior (code rollback)
+
+### What
+- Rolled `SparkCallAssistantService.kt` back to exactly the state from commit `914ecde`.
+- This removes all subsequent greeting-instruction/beep-startup experiments and route-order startup changes introduced after that checkpoint.
+
+### Why
+- User requested returning to last known state before instruction-injection changes due regression (no greeting/no turns).
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
