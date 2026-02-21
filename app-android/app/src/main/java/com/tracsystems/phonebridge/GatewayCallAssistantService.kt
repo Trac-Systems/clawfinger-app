@@ -927,11 +927,11 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         var chunkCount = 0
         val captureStartedAtMs = System.currentTimeMillis()
         var sampleRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
-        val fastEndpointMode = System.currentTimeMillis() - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
-        val updateDerivedThresholds = {
+        var fastEndpointMode = System.currentTimeMillis() - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
+        val updateDerivedThresholds = { fastMode: Boolean ->
             val preRollMaxBytes = ((sampleRate * UTTERANCE_PRE_ROLL_MS) / 1000) * 2
             val minSpeechSamples = (sampleRate * UTTERANCE_MIN_SPEECH_MS) / 1000
-            val silenceMs = if (fastEndpointMode) FAST_POST_PLAYBACK_SILENCE_MS else UTTERANCE_SILENCE_MS
+            val silenceMs = if (fastMode) FAST_POST_PLAYBACK_SILENCE_MS else UTTERANCE_SILENCE_MS
             val silenceSamplesLimit = (sampleRate * silenceMs) / 1000
             val maxTurnSamples = (sampleRate * UTTERANCE_MAX_TURN_MS) / 1000
             EndpointThresholds(
@@ -941,22 +941,35 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 maxTurnSamples = maxTurnSamples,
             )
         }
-        var thresholds = updateDerivedThresholds()
+        var thresholds = updateDerivedThresholds(fastEndpointMode)
 
         while (InCallStateHolder.hasLiveCall()) {
-            val elapsedMs = (System.currentTimeMillis() - captureStartedAtMs).toInt()
+            val nowMs = System.currentTimeMillis()
+            val elapsedMs = (nowMs - captureStartedAtMs).toInt()
             if (elapsedMs >= UTTERANCE_LOOP_TIMEOUT_MS) {
                 break
+            }
+            val fastEndpointModeNow = nowMs - lastPlaybackEndedAtMs.get() <= FAST_POST_PLAYBACK_WINDOW_MS
+            if (fastEndpointModeNow != fastEndpointMode) {
+                fastEndpointMode = fastEndpointModeNow
+                thresholds = updateDerivedThresholds(fastEndpointMode)
             }
             val streamSession = ensureRootCaptureStreamSession()
             if (streamSession == null) {
                 consecutiveNoAudioRejects += 1
-                maybeRecoverRootRoute(
-                    force = false,
-                    reason = "utterance_stream_session_null",
-                    noAudioStreak = consecutiveNoAudioRejects,
-                )
+                if (speakingNow) {
+                    maybeRecoverRootRoute(
+                        force = false,
+                        reason = "utterance_stream_session_null",
+                        noAudioStreak = consecutiveNoAudioRejects,
+                    )
+                }
                 if (!speakingNow && elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
+                    maybeRecoverRootRoute(
+                        force = false,
+                        reason = "utterance_no_speech_timeout_stream_session_null",
+                        noAudioStreak = consecutiveNoAudioRejects,
+                    )
                     CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:stream_session_null")
                     return null
                 }
@@ -964,24 +977,17 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             if (streamSession.effectiveSampleRate != sampleRate) {
                 sampleRate = streamSession.effectiveSampleRate
-                thresholds = updateDerivedThresholds()
+                thresholds = updateDerivedThresholds(fastEndpointMode)
             }
             val captured = readRootCaptureStreamChunk(streamSession, UTTERANCE_CAPTURE_CHUNK_MS)
             if (captured == null || captured.pcm.size < 2) {
                 consecutiveNoAudioRejects += 1
-                val allowNoAudioRecovery = speakingNow || elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS
-                if (allowNoAudioRecovery) {
+                if (speakingNow) {
                     maybeRecoverRootRoute(
                         force = false,
                         reason = "utterance_stream_empty_chunk",
                         noAudioStreak = consecutiveNoAudioRejects,
                     )
-                    if (!speakingNow && fastEndpointMode && consecutiveNoAudioRejects >= FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD) {
-                        stopRootCaptureStreamSession("fast_post_playback_rebind_$consecutiveNoAudioRejects")
-                        if (consecutiveNoAudioRejects >= fastPostPlaybackStreamUnpinThreshold()) {
-                            resetRootCapturePin("fast_post_playback_no_audio_$consecutiveNoAudioRejects")
-                        }
-                    }
                     if (consecutiveNoAudioRejects >= ROOT_CAPTURE_STREAM_RESTART_THRESHOLD) {
                         stopRootCaptureStreamSession("stream_timeout_$consecutiveNoAudioRejects")
                     }
@@ -998,6 +1004,12 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         break
                     }
                 } else if (elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
+                    maybeRecoverRootRoute(
+                        force = false,
+                        reason = "utterance_no_speech_timeout_empty_chunk",
+                        noAudioStreak = consecutiveNoAudioRejects,
+                    )
+                    stopRootCaptureStreamSession("utterance_no_speech_timeout_rebind")
                     CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:empty_chunk")
                     return null
                 }
@@ -2528,6 +2540,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             timeoutMs = 2_500L,
         )
         if (!prep.ok) {
+            Log.w(
+                TAG,
+                "root playback stream fifo prep failed device=$device: ${prep.error ?: prep.stderr.ifBlank { "unknown" }}",
+            )
             return null
         }
         val pid = startRootTinyplayRawProcess(
@@ -4342,6 +4358,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             timeoutMs = 2_500L,
         )
         if (!prep.ok) {
+            Log.w(
+                TAG,
+                "root capture stream fifo prep failed device=${source.device}: ${prep.error ?: prep.stderr.ifBlank { "unknown" }}",
+            )
             return null
         }
         val pid = startRootTinycapRawProcess(
