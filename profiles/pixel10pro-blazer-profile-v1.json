@@ -74,23 +74,23 @@
     ],
     "endpoint_settings": {
       "20": {
-        "request_sample_rate": 24000,
-        "effective_sample_rate": 11025,
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
         "request_channels": 1
       },
       "21": {
-        "request_sample_rate": 24000,
-        "effective_sample_rate": 11025,
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
         "request_channels": 1
       },
       "22": {
-        "request_sample_rate": 24000,
-        "effective_sample_rate": 11025,
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
         "request_channels": 1
       },
       "54": {
-        "request_sample_rate": 24000,
-        "effective_sample_rate": 11025,
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
         "request_channels": 1
       }
     },
