@@ -3414,3 +3414,16 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 04:02 — Operator rollback to commit 9ec3fd2 behavior
+
+### What
+- Restored `SparkCallAssistantService.kt` from commit `9ec3fd2` exactly.
+- No additional logic changes layered on top.
+
+### Why
+- User requested direct rollback to known checkpoint `9ec3fd2`.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
