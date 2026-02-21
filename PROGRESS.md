@@ -3914,3 +3914,23 @@ _Last updated: 2026-02-19_
 - APK rebuilt + reinstalled on Pixel.
 - Profile re-pushed to `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`.
 - Dial test executed to `+4915129135779`; logs show normal call transition and assistant service startup.
+
+## 2026-02-21 07:36 — Policy profile tweak: strict capture + playback fallback
+
+### What
+- Updated profile policy to disable global strict gating:
+  - `strict_reliability_mode = false`
+  - `no_unvalidated_endpoint_fallback = false`
+  - `fail_fast_if_no_profile_match = false`
+- Kept capture strict by profile ordering:
+  - `capture.candidate_order_in_app = [20]`
+- Kept playback fallback path available:
+  - `playback.candidate_order_in_app = [29, 23, 18, 19]`
+
+### Why
+- Preserve capture stability while allowing playback recovery if endpoint `29` loses route.
+
+### Validation
+- Profile pushed to phone runtime (`profile.json`) and app reloaded.
+- Dial command issued to `+4915129135779`.
+- Logs show call active + assistant start + playback launched on device `29`.

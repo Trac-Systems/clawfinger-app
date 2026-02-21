@@ -71,7 +71,7 @@
       "bits": 16,
       "notes": "Pinned as working capture source in recent successful turns"
     },
-    "candidate_order_in_app": [20, 21, 22, 54],
+    "candidate_order_in_app": [20],
     "recommended_strict_mode": [20]
   },
   "beep": {
@@ -94,9 +94,9 @@
     }
   },
   "policy": {
-    "strict_reliability_mode": true,
-    "no_unvalidated_endpoint_fallback": true,
-    "fail_fast_if_no_profile_match": true
+    "strict_reliability_mode": false,
+    "no_unvalidated_endpoint_fallback": false,
+    "fail_fast_if_no_profile_match": false
   },
   "provenance": {
     "source_file": "app-android/app/src/main/java/com/tracsystems/phonebridge/SparkCallAssistantService.kt",
