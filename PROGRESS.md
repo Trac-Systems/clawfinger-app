@@ -3655,3 +3655,19 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:17 — Switched back to standalone per-turn beep (embedded mode off)
+
+### What
+- Disabled embedded-tail beep mode:
+  - `ENABLE_EMBEDDED_READY_BEEP = false`
+- Kept `READY_BEEP_EVERY_TURN = true`.
+- Resulting behavior: explicit standalone ready beep playback after each assistant reply again.
+
+### Why
+- Embedded beep was not reliably perceived on remote side after non-greeting turns.
+- Requirement is explicit audible beep every turn.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
