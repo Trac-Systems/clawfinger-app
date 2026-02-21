@@ -4198,3 +4198,38 @@ _Last updated: 2026-02-19_
     - transcript: `Can you recommend me a good movie?`
     - reply generated and played via root PCM on device 29.
 - Immediate hangup observed earlier in one probe run was caused by scripted test hangup command, not by watchdog/autohang path.
+
+## 2026-02-21 19:14 — Accuracy stabilization tuning (turn understanding + drift mitigation)
+
+### Observed issue
+- Multi-turn logs show semantic drift in ASR transcripts (e.g. recommendation requests interpreted as “make/book” phrases), plus occasional post-reply no-audio windows.
+
+### Changes applied
+- Enforced server ASR authority for turn handling:
+  - disable local transcript hint injection (`ENABLE_LOCAL_TRANSCRIPT_HINT=false`)
+  - always run backend ASR (`skipAsrForTurn=false`)
+- Hardened capture fallback behavior:
+  - force capture source rotation on `no_audio_source`
+  - allow rotation even when source was pinned for that specific no-audio case
+- Adjusted utterance/capture timing for fewer clipped turns:
+  - `CAPTURE_DURATION_BY_ATTEMPT_MS: [900, 1200, 1500]`
+  - `UTTERANCE_MIN_SPEECH_MS: 180`
+  - `FAST_POST_PLAYBACK_SILENCE_MS: 340`
+- Profile capture primary/candidate order moved to prefer `incall_cap_1 (21)` before `20` to reduce repeated `device 20` I/O failures.
+
+## 2026-02-21 19:26 — Profile-only capture adjustment (keep stable baseline + add newly active channel)
+
+### Why
+- Do not overwrite the known-good capture endpoint in the profile.
+- Add support for the newly active capture endpoint as a secondary path, while keeping profile-driven control.
+
+### Changes
+- `profiles/pixel10pro-blazer-profile-v1.json` updated:
+  - capture primary restored to baseline `incall_cap_0 (20)`.
+  - `capture.validated_secondary` added for `incall_cap_1 (21)`.
+  - candidate order set to `[20, 21, 22, 54]`.
+  - strict recommended list narrowed to validated capture devices `[20, 21]`.
+
+### Deploy
+- Profile pushed to device as `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`.
+- Internal app profile sync attempted via `run-as`, then app force-stopped so next call reloads profile.
