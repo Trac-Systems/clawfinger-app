@@ -3743,3 +3743,16 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:31 — Reverted strict endpoint-23 pin after no-audio result
+
+### What
+- Reverted playback candidate list from strict `[23]` back to fallback set `[29, 23, 18, 19]`.
+
+### Why
+- Strict 23 test produced no remote audio despite local tinyplay process success.
+- Restored prior fallback behavior immediately.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
