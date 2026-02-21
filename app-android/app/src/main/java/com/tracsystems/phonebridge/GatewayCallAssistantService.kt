@@ -210,7 +210,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260221-capture-preroll-safe-a")
+            Log.i(TAG, "build marker: 20260221-capture-softstart-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             speaking.set(false)
@@ -921,6 +921,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         var preRoll = ByteArray(0)
         val current = ByteArrayOutputStream()
         var speakingNow = false
+        var softStartSpeechFrames = 0
         var speechSamples = 0
         var silenceSamples = 0
         var chunkCount = 0
@@ -1009,10 +1010,21 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             } else {
                 rms >= UTTERANCE_VAD_RMS
             }
+            val softStartCandidate = rms >= UTTERANCE_SOFT_START_RMS
             var appendChunk = true
 
             if (!speakingNow) {
                 if (!voiced) {
+                    if (softStartCandidate) {
+                        softStartSpeechFrames += 1
+                    } else {
+                        softStartSpeechFrames = 0
+                    }
+                } else {
+                    softStartSpeechFrames = 0
+                }
+                val speechStartDetected = voiced || softStartSpeechFrames >= UTTERANCE_SOFT_START_FRAMES
+                if (!speechStartDetected) {
                     preRoll = appendAndTrimBytes(preRoll, pcm, thresholds.preRollMaxBytes)
                     appendRootRollingPrebuffer(captured)
                     if (elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
@@ -1022,6 +1034,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     continue
                 }
                 speakingNow = true
+                softStartSpeechFrames = 0
                 current.reset()
                 if (preRoll.isNotEmpty()) {
                     current.write(preRoll)
@@ -5692,6 +5705,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_VAD_RMS = 45.0
         private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
         private const val UTTERANCE_VAD_RMS_FALLBACK = 70.0
+        private const val UTTERANCE_SOFT_START_RMS = 26.0
+        private const val UTTERANCE_SOFT_START_FRAMES = 2
         private const val WEBRTC_VAD_FRAME_SAMPLES = 320
         private const val WEBRTC_VAD_SPEECH_MS = 60
         private const val WEBRTC_VAD_SILENCE_MS = 280
