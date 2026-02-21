@@ -125,6 +125,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val callMuteEnforced = AtomicBoolean(false)
     private val lastSpeechActivityAtMs = AtomicLong(0L)
     private val lastPlaybackEndedAtMs = AtomicLong(0L)
+    private val postPlaybackCaptureFlushPending = AtomicBoolean(false)
     private val lastReadyCueAtMs = AtomicLong(0L)
     private var readyBeepWavCache: ByteArray? = null
     private val rootBootstrapInFlight = AtomicBoolean(false)
@@ -210,7 +211,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260221-capture-stability-b")
+            Log.i(TAG, "build marker: 20260222-post-playback-backlog-flush-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             speaking.set(false)
@@ -241,6 +242,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             rootPlaybackCalibratedForCall = false
             forceFallbackTurnsRemaining = FIRST_TURNS_FORCE_FALLBACK
             startupRecoveryActive = ENABLE_STARTUP_CAPTURE_RECOVERY
+            postPlaybackCaptureFlushPending.set(false)
             fallbackPromptAtMs.set(0L)
             initializeRootRuntime()
             applyRootCallRouteProfile()
@@ -280,6 +282,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runCatching { turnVad?.close() }
         turnVad = null
         startupRecoveryActive = false
+        postPlaybackCaptureFlushPending.set(false)
         rootCaptureCalibratedForCall = false
         rootPlaybackCalibratedForCall = false
         restoreRootCallRouteProfile()
@@ -384,6 +387,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 CommandAuditLog.add("voice_bridge:greeting_root:${reply.take(96)}")
                 speaking.set(false)
                 lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+                markPostPlaybackCaptureFlushPending("greeting_played")
                 startCaptureLoopWithReadyCue(
                     delayMs = POST_PLAYBACK_CAPTURE_DELAY_MS,
                     reason = "greeting_played",
@@ -393,6 +397,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (rootPlayback.interrupted) {
                 CommandAuditLog.add("voice_bridge:greeting_barge_in")
                 speaking.set(false)
+                lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+                markPostPlaybackCaptureFlushPending("greeting_interrupted")
                 startCaptureLoopWithReadyCue(
                     delayMs = BARGE_IN_RESUME_DELAY_MS,
                     reason = "greeting_interrupted",
@@ -444,6 +450,12 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                             stopRootCaptureStreamSession("state_machine_empty_fallback")
                             Log.w(TAG, "state-machine utterance empty; falling back to capture probes (strictStream=$strictStreamOnly)")
                         } else {
+                            stopRootCaptureStreamSession("state_machine_empty_retry_strict")
+                            maybeRecoverRootRoute(
+                                force = false,
+                                reason = "state_machine_empty_retry_strict",
+                                noAudioStreak = consecutiveNoAudioRejects,
+                            )
                             CommandAuditLog.add("voice_bridge:state_machine_empty_retry_strict")
                             Log.w(TAG, "state-machine utterance empty; strict stream retry")
                         }
@@ -746,6 +758,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     markSpeechActivity("root_reply_played")
                     speaking.set(false)
                     lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+                    markPostPlaybackCaptureFlushPending("reply_played")
                     startCaptureLoopWithReadyCue(
                         delayMs = POST_PLAYBACK_CAPTURE_DELAY_MS,
                         reason = "reply_played",
@@ -757,6 +770,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     lastAssistantReplyText = cleanReply
                     markSpeechActivity("root_reply_interrupted")
                     speaking.set(false)
+                    lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+                    markPostPlaybackCaptureFlushPending("reply_interrupted")
                     startCaptureLoopWithReadyCue(
                         delayMs = BARGE_IN_RESUME_DELAY_MS,
                         reason = "reply_interrupted",
@@ -779,6 +794,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     logPlaybackShiftClearedIfNeeded("root_playback_failed")
                     rootPlaybackProfileLockedForCall = false
                     speaking.set(false)
+                    markPostPlaybackCaptureFlushPending("root_playback_failed")
                     startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
                     return@execute
                 }
@@ -872,6 +888,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         )
         if (result.played) {
             CommandAuditLog.add("voice_bridge:ready_beep:$reason")
+            lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+            markPostPlaybackCaptureFlushPending("ready_beep:$reason")
             Log.i(TAG, "ready beep played: $reason")
         } else {
             CommandAuditLog.add("voice_bridge:ready_beep_fail:$reason")
@@ -942,6 +960,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             )
         }
         var thresholds = updateDerivedThresholds(fastEndpointMode)
+        var streamBacklogEvaluated = false
 
         while (InCallStateHolder.hasLiveCall()) {
             val nowMs = System.currentTimeMillis()
@@ -978,6 +997,25 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (streamSession.effectiveSampleRate != sampleRate) {
                 sampleRate = streamSession.effectiveSampleRate
                 thresholds = updateDerivedThresholds(fastEndpointMode)
+            }
+            if (!streamBacklogEvaluated) {
+                streamBacklogEvaluated = true
+                val pendingFlush = postPlaybackCaptureFlushPending.get()
+                val sincePlaybackMs = nowMs - lastPlaybackEndedAtMs.get()
+                val withinPostPlaybackWindow = sincePlaybackMs in 0..POST_PLAYBACK_STREAM_BACKLOG_FLUSH_WINDOW_MS
+                if (pendingFlush || withinPostPlaybackWindow) {
+                    clearRootRollingPrebuffer()
+                    val reason = if (pendingFlush) {
+                        "pending_post_playback:${sincePlaybackMs}ms"
+                    } else {
+                        "post_playback_window:${sincePlaybackMs}ms"
+                    }
+                    val drained = flushRootCaptureStreamBacklog(streamSession, reason)
+                    postPlaybackCaptureFlushPending.set(false)
+                    if (drained > 0) {
+                        continue
+                    }
+                }
             }
             val captured = readRootCaptureStreamChunk(streamSession, UTTERANCE_CAPTURE_CHUNK_MS)
             if (captured == null || captured.pcm.size < 2) {
@@ -4529,6 +4567,44 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun flushRootCaptureStreamBacklog(
+        session: RootCaptureStreamSession,
+        reason: String,
+    ): Int {
+        session.pendingData = ByteArray(0)
+        val maxBytes = ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_MAX_BYTES
+        val deadline = System.currentTimeMillis() + ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_TIMEOUT_MS
+        val scratch = ByteArray(4096)
+        var drained = 0
+        while (drained < maxBytes) {
+            if (System.currentTimeMillis() > deadline) {
+                break
+            }
+            val available = runCatching { session.inputStream.available() }.getOrDefault(0)
+            if (available <= 0) {
+                if (drained <= 0) {
+                    break
+                }
+                if (!sleepInterruptible(4L)) {
+                    break
+                }
+                continue
+            }
+            val remaining = maxBytes - drained
+            val toRead = minOf(scratch.size, available, remaining)
+            val read = runCatching { session.inputStream.read(scratch, 0, toRead) }.getOrDefault(-1)
+            if (read <= 0) {
+                break
+            }
+            drained += read
+        }
+        if (drained > 0) {
+            CommandAuditLog.add("voice_bridge:root_stream_backlog_flush:$drained:$reason")
+            Log.i(TAG, "root capture stream backlog flushed bytes=$drained reason=$reason")
+        }
+        return drained
+    }
+
     private fun sleepInterruptible(ms: Long): Boolean {
         return try {
             Thread.sleep(ms)
@@ -5444,6 +5520,12 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         CommandAuditLog.add("voice_bridge:activity:$source")
     }
 
+    private fun markPostPlaybackCaptureFlushPending(reason: String) {
+        postPlaybackCaptureFlushPending.set(true)
+        clearRootRollingPrebuffer()
+        CommandAuditLog.add("voice_bridge:root_stream_backlog_pending:$reason")
+    }
+
     private fun enforceCallMute() {
         if (!ENFORCE_CALL_MUTE) {
             callMuteEnforced.set(false)
@@ -5624,6 +5706,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE = 16
         private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
         private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 320L
+        private const val ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_TIMEOUT_MS = 180L
+        private const val ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_MAX_BYTES = 262_144
         private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 2
         private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 10
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
@@ -5720,6 +5804,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val UTTERANCE_SILENCE_MS = 520
         private const val FAST_POST_PLAYBACK_SILENCE_MS = 520
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 1_200L
+        private const val POST_PLAYBACK_STREAM_BACKLOG_FLUSH_WINDOW_MS = 2_200L
         private const val FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD = 2
         private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 12
         private const val UTTERANCE_MAX_TURN_MS = 8_000
