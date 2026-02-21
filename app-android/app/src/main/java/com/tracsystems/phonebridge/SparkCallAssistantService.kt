@@ -4432,11 +4432,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val SILENCE_CHECK_INTERVAL_MS = 1_000L
         private const val ENABLE_READY_BEEP_CUE = true
         private const val READY_BEEP_MIN_INTERVAL_MS = 320L
-        private const val READY_BEEP_DURATION_MS = 95
-        private const val READY_BEEP_FREQUENCY_HZ = 1320
-        private const val READY_BEEP_AMPLITUDE = 0.18
-        private const val READY_BEEP_ATTACK_MS = 10
-        private const val READY_BEEP_RELEASE_MS = 20
+        private const val READY_BEEP_DURATION_MS = 180
+        private const val READY_BEEP_FREQUENCY_HZ = 920
+        private const val READY_BEEP_AMPLITUDE = 0.30
+        private const val READY_BEEP_ATTACK_MS = 12
+        private const val READY_BEEP_RELEASE_MS = 28
         private const val READY_BEEP_EVERY_TURN = false
         private const val READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS = 60L
         private const val CAPTURE_RETRY_DELAY_MS = 120L

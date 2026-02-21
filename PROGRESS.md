@@ -3610,3 +3610,20 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:07 — Increased ready-beep audibility on PSTN path
+
+### What
+- Tuned greeting ready-beep envelope for phone-call audibility:
+  - duration `95ms -> 180ms`
+  - frequency `1320Hz -> 920Hz`
+  - amplitude `0.18 -> 0.30`
+  - attack/release `10/20 -> 12/28`
+
+### Why
+- User reports no audible beep on remote phone despite local log showing `ready beep played`.
+- Original beep was too short/bright/quiet for narrowband call path.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
