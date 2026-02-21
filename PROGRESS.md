@@ -3328,3 +3328,21 @@ _Last updated: 2026-02-19_
 ### Validation
 - `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
 - `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
+
+## 2026-02-21 03:03 — Added audible readiness beep cue on listen handoff
+
+### What
+- Implemented real "ready to speak" beep cue in Android service.
+- Added generated short tone WAV (`buildReadyBeepWav`) and playback hook (`maybePlayReadyBeepCue`) using root playback path.
+- Wired cue into listen transitions after model playback:
+  - greeting played/interrupted,
+  - reply played/interrupted.
+- Beep is rate-limited to avoid spam (`READY_BEEP_MIN_INTERVAL_MS`).
+
+### Why
+- User requested explicit audible cue so caller knows when it is safe to speak.
+- This addresses turn-taking clarity independently of VAD timing.
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `cd app-android && ./gradlew :app:installDebug` passed on `59191FDCH000YV`.
