@@ -4498,7 +4498,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_TINYMIX_BIN = "/data/adb/service.d/phonebridge-tinymix"
         private const val ROOT_PLAY_TIMEOUT_MIN_MS = 1_200L
         private const val ROOT_PLAY_TIMEOUT_MAX_MS = 90_000L
-        private const val ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 500L
+        private const val ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 2_500L
         private const val ROOT_PLAYBACK_RETRY_ON_TIMEOUT = false
         private const val ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED = true
         private const val PLAYBACK_STUCK_GRACE_MS = 350L

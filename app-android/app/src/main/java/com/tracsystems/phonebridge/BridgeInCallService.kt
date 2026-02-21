@@ -69,7 +69,9 @@ class BridgeInCallService : InCallService() {
                     if (SparkCallAssistantService.enforceCallMute()) {
                         InCallStateHolder.setCallMuted(true)
                     }
-                    scheduleRouteReapplyBurst()
+                    if (ENABLE_ROUTE_REAPPLY_BURST) {
+                        scheduleRouteReapplyBurst()
+                    }
                     CommandAuditLog.add("call:voice_assistant:start")
                 }
                 Call.STATE_DISCONNECTED -> {
@@ -221,5 +223,6 @@ class BridgeInCallService : InCallService() {
     private companion object {
         private const val TAG = "BridgeInCallService"
         private const val ROOT_PREWARM_THROTTLE_MS = 12_000L
+        private const val ENABLE_ROUTE_REAPPLY_BURST = false
     }
 }
