@@ -101,6 +101,7 @@ Canonical runbook for Pixel call audio capture/playback + Spark voice gateway in
 6. If active endpoint quality is bad:
    - update `profiles/pixel10pro-blazer-profile-v1.json` for that endpoint,
    - keep baseline endpoint unchanged,
+   - set per-endpoint `request_sample_rate`, `request_channels`, and `effective_sample_rate` as needed,
    - add/adjust endpoint in `capture.validated_secondary`,
    - reorder `capture.candidate_order_in_app` and `recommended_strict_mode` as needed.
 7. Push profile again and retest with another human call.

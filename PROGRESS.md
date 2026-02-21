@@ -4256,3 +4256,25 @@ _Last updated: 2026-02-19_
   - keep baseline endpoint,
   - add newly activated endpoint as secondary,
   - tune only via profile edits + retest with human pickup.
+
+## 2026-02-21 19:45 — Root cause for high-pitch RX and profile plumbing fix
+
+### Root cause identified
+- Capture profile `request_sample_rate/request_channels` fields were not wired into runtime capture session setup.
+- Stream capture path assumed requested sample rate as effective sample rate unless hardcoded correction logic was enabled.
+- Result: when modem route exposed a different effective rate, RX wavs could be persisted/transcribed at wrong pitch.
+
+### Fix implemented
+- Added profile-driven capture format plumbing in app runtime:
+  - per-device `captureRequestRateOverrides`,
+  - per-device `captureRequestChannelOverrides`,
+  - per-device `captureEffectiveRateOverrides`.
+- Stream + fallback capture now resolve rates/channels from profile per active capture device.
+- Added profile support for `effective_sample_rate` in `capture.validated_primary` and `capture.validated_secondary`.
+- Updated Pixel profile with explicit effective-rate correction for current active capture routes:
+  - device `20`: `effective_sample_rate=24000`
+  - device `21`: `effective_sample_rate=24000`
+
+### Intent
+- Keep endpoint behavior strictly profile-driven and tunable without app hardcoding.
+- Enable endpoint-specific quality training loop (human pickup + wav check + profile edit + retest).

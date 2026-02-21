@@ -91,6 +91,13 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeRouteRestoreCommands: List<String> = defaultRootRouteRestoreCommands(ROOT_TINYMIX_BIN)
     private var runtimeCaptureProbeSetCommands: List<String> = defaultRootCaptureProbeSetCommands(ROOT_TINYMIX_BIN)
     private var runtimeCaptureProbeRestoreCommands: List<String> = defaultRootCaptureProbeRestoreCommands(ROOT_TINYMIX_BIN)
+    private var runtimeCaptureRequestRateOverrides: Map<Int, Int> = emptyMap()
+    private var runtimeCaptureRequestChannelOverrides: Map<Int, Int> = emptyMap()
+    private var runtimeCaptureEffectiveRateOverrides: Map<Int, Int> = emptyMap()
+    private var runtimeCaptureDurationByAttemptMs: List<Int> = CAPTURE_DURATION_BY_ATTEMPT_MS
+    private var runtimeUtteranceMinSpeechMs: Int = UTTERANCE_MIN_SPEECH_MS
+    private var runtimeFastPostPlaybackSilenceMs: Int = FAST_POST_PLAYBACK_SILENCE_MS
+    private var runtimeLocalTranscriptHintEnabled: Boolean = ENABLE_LOCAL_TRANSCRIPT_HINT
     private var runtimePolicyStrictReliabilityMode: Boolean = DEFAULT_POLICY_STRICT_RELIABILITY_MODE
     private var runtimePolicyNoUnvalidatedEndpointFallback: Boolean = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
     private var runtimePolicyFailFastIfNoProfileMatch: Boolean = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
@@ -202,6 +209,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
+            Log.i(TAG, "build marker: 20260221-turnloop-fix-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             speaking.set(false)
@@ -209,7 +217,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             selectedAudioSource = null
             selectedRootCaptureSource = ROOT_CAPTURE_CANDIDATES.firstOrNull()
             selectedRootCaptureSampleRate = ROOT_CAPTURE_REQUEST_SAMPLE_RATE
-            selectedRootCaptureChannels = 1
+            selectedRootCaptureChannels = ROOT_CAPTURE_PRIMARY_CHANNELS
             selectedRootPlaybackDevice = null
             rootPlaybackProfileLockedForCall = false
             lastCaptureShiftSignature = null
@@ -434,13 +442,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     val utterance = captureUtteranceStateMachine()
                     if (utterance == null) {
                         lastRejectionReason = "utterance_empty"
-                        if (strictStreamOnly) {
-                            Log.w(TAG, "state-machine utterance empty; strict stream mode retry")
-                            speaking.set(false)
-                            startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
-                            return@execute
-                        }
-                        Log.w(TAG, "state-machine utterance empty; falling back to fixed capture probes")
+                        stopRootCaptureStreamSession("state_machine_empty_fallback")
+                        Log.w(TAG, "state-machine utterance empty; falling back to capture probes (strictStream=$strictStreamOnly)")
                     } else {
                         transcriptPreview = utterance.transcript
                         transcriptAudioWav = utterance.audioWav
@@ -455,7 +458,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 } else if (!strictStreamOnly) {
                     CommandAuditLog.add("voice_bridge:first_turn_force_fallback")
                 }
-                if (transcriptPreview.isBlank() && transcriptAudioWav == null && !strictStreamOnly) {
+                if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
                     repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
                         if (transcriptPreview.isNotBlank()) {
                             return@repeat
@@ -492,7 +495,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                                 )
                             } else {
                                 sameSourceRetries = 0
-                                rotateRootCaptureSource()
+                                rotateRootCaptureSource(force = capture.rejectionReason == "no_audio_source")
                             }
                             return@repeat
                         }
@@ -594,11 +597,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         }
                     }
                 }
-                if (transcriptPreview.isBlank() && transcriptAudioWav == null && strictStreamOnly) {
-                    speaking.set(false)
-                    startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
-                    return@execute
-                }
                 if (transcriptPreview.isBlank() && transcriptAudioWav == null) {
                     val clarificationSpoken = maybeSpeakClarification(lastRejectionReason)
                     if (!clarificationSpoken) {
@@ -667,7 +665,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     startCaptureLoop(TRANSCRIPT_RETRY_DELAY_MS)
                     return@execute
                 }
-                val skipAsrForTurn = transcriptPreview.isNotBlank()
+                val skipAsrForTurn = false
                 if (!skipAsrForTurn) {
                     val reason = "local_asr_empty"
                     CommandAuditLog.add("voice_bridge:turn_server_asr_fallback:$reason")
@@ -678,7 +676,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 val response = runCatching {
                     callSparkTurn(
-                        transcript = transcriptPreview.takeIf { it.isNotBlank() },
+                        transcript = if (ENABLE_LOCAL_TRANSCRIPT_HINT) transcriptPreview.takeIf { it.isNotBlank() } else null,
                         audioWav = transcriptAudioWav ?: buildSilenceWav(320),
                         skipAsr = skipAsrForTurn,
                     )
@@ -1267,7 +1265,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 sampleRate = sampleRate,
                 stickToSelectedSource = stickToSelectedSource,
             )
-            if (rootCapture.wav != null || STRICT_REMOTE_AUDIO_ONLY) {
+            val strictRootOnly = STRICT_REMOTE_AUDIO_ONLY || runtimeStrictStreamOnly || runtimePolicyNoUnvalidatedEndpointFallback
+            if (rootCapture.wav != null || strictRootOnly) {
                 return rootCapture
             }
         }
@@ -1572,11 +1571,16 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val pinnedChannels = selectedRootCaptureChannels
         val pinnedSourceDevice = selectedRootCaptureSource?.device
         val usePinnedFormat = rootCapturePinned && pinnedSourceDevice == device
+        val preferredRateForDevice = captureRequestSampleRateForDevice(device)
+        val preferredChannelsForDevice = captureRequestChannelsForDevice(device)
         val rateOrder = if (usePinnedFormat && pinnedRate != null) {
             listOf(pinnedRate)
         } else {
             buildList {
-                add(preferredSampleRate)
+                add(preferredRateForDevice)
+                if (preferredSampleRate > 0 && preferredSampleRate != preferredRateForDevice) {
+                    add(preferredSampleRate)
+                }
                 ROOT_CAPTURE_SAMPLE_RATE_CANDIDATES.forEach { rate ->
                     if (!contains(rate)) add(rate)
                 }
@@ -1586,7 +1590,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             listOf(pinnedChannels)
         } else {
             buildList {
-                add(ROOT_CAPTURE_PRIMARY_CHANNELS)
+                add(preferredChannelsForDevice)
                 ROOT_CAPTURE_CHANNEL_CANDIDATES.forEach { channels ->
                     if (!contains(channels)) add(channels)
                 }
@@ -1605,7 +1609,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                         TAG,
                         "root tinycap format mismatch device=$device requested=${rate}Hz/${channels}ch actual=${captured.sampleRate}Hz/${captured.channels}ch",
                     )
-                } else if (rate != preferredSampleRate || channels != ROOT_CAPTURE_PRIMARY_CHANNELS) {
+                } else if (rate != preferredRateForDevice || channels != preferredChannelsForDevice) {
                     Log.i(TAG, "root tinycap fallback device=$device sampleRate=$rate channels=$channels")
                 }
                 return captured
@@ -1720,7 +1724,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (monoPcm.size < 2) {
             return null
         }
-        val effectiveSampleRate = applyRootCaptureSampleRateCorrection(device, sampleRate)
+        val effectiveSampleRate = captureEffectiveSampleRateForDevice(device, sampleRate)
         if (effectiveSampleRate != sampleRate) {
             Log.w(
                 TAG,
@@ -1790,7 +1794,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             hint = "d${device}-req${sampleRate}",
         )
         val decoded = decodeWavToPcm16Mono(wav) ?: return null
-        val effectiveSampleRate = applyRootCaptureSampleRateCorrection(device, decoded.sampleRate)
+        val effectiveSampleRate = captureEffectiveSampleRateForDevice(device, decoded.sampleRate)
         if (decoded.sampleRate != sampleRate || decoded.channels != channels || decoded.bitsPerSample != 16) {
             Log.w(
                 TAG,
@@ -1833,6 +1837,27 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             output.putShort(mixed.toShort())
         }
         return output.array()
+    }
+
+    private fun captureRequestSampleRateForDevice(device: Int): Int {
+        return runtimeCaptureRequestRateOverrides[device]
+            ?.takeIf { it > 0 }
+            ?: adaptiveCaptureSampleRate
+            ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+    }
+
+    private fun captureRequestChannelsForDevice(device: Int): Int {
+        return runtimeCaptureRequestChannelOverrides[device]
+            ?.takeIf { it > 0 }
+            ?: ROOT_CAPTURE_PRIMARY_CHANNELS
+    }
+
+    private fun captureEffectiveSampleRateForDevice(device: Int, requestedRate: Int): Int {
+        val profileRate = runtimeCaptureEffectiveRateOverrides[device]?.takeIf { it > 0 }
+        if (profileRate != null) {
+            return profileRate
+        }
+        return applyRootCaptureSampleRateCorrection(device, requestedRate)
     }
 
     private fun applyRootCaptureSampleRateCorrection(device: Int, sampleRate: Int): Int {
@@ -1890,11 +1915,11 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }, "pb-root-route-recover").start()
     }
 
-    private fun rotateRootCaptureSource() {
+    private fun rotateRootCaptureSource(force: Boolean = false) {
         if (!ENABLE_ROOT_PCM_BRIDGE || ROOT_CAPTURE_CANDIDATES.isEmpty()) {
             return
         }
-        if (rootCapturePinned) {
+        if (rootCapturePinned && !force) {
             return
         }
         val current = selectedRootCaptureSource
@@ -4236,17 +4261,15 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             return existing
         }
         stopRootCaptureStreamSession("capture_stream_rebind")
-        val preferredRate = adaptiveCaptureSampleRate
-            ?: selectedRootCaptureSampleRate
-            ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
-        val preferredChannels = selectedRootCaptureChannels ?: ROOT_CAPTURE_PRIMARY_CHANNELS
+        val preferredRate = captureRequestSampleRateForDevice(source.device)
+        val preferredChannels = captureRequestChannelsForDevice(source.device)
         val started = startRootTinycapStreamSession(
             source = source,
             sampleRate = preferredRate,
             channels = preferredChannels,
         ) ?: return null
         rootCaptureStreamSession = started
-        selectedRootCaptureSampleRate = started.rawSampleRate
+        selectedRootCaptureSampleRate = started.effectiveSampleRate
         selectedRootCaptureChannels = 1
         logCaptureShiftIfChanged("stream_capture_session")
         CommandAuditLog.add("voice_bridge:root_stream_capture:${source.name}")
@@ -4285,7 +4308,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val requestedRate = sampleRate.coerceAtLeast(8_000)
         val requestedChannels = channels.coerceAtLeast(1)
         val rawSampleRate = requestedRate
-        val effectiveSampleRate = applyRootCaptureSampleRateCorrection(source.device, requestedRate)
+        val effectiveSampleRate = captureEffectiveSampleRateForDevice(source.device, requestedRate)
         if (effectiveSampleRate != requestedRate) {
             Log.w(
                 TAG,
@@ -4780,6 +4803,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runtimeRouteRestoreCommands = profile.routeRestoreCommands
             runtimeCaptureProbeSetCommands = profile.captureProbeSetCommands
             runtimeCaptureProbeRestoreCommands = profile.captureProbeRestoreCommands
+            runtimeCaptureRequestRateOverrides = profile.captureRequestRateOverrides
+            runtimeCaptureRequestChannelOverrides = profile.captureRequestChannelOverrides
+            runtimeCaptureEffectiveRateOverrides = profile.captureEffectiveRateOverrides
             runtimePolicyStrictReliabilityMode = profile.policyStrictReliabilityMode
             runtimePolicyNoUnvalidatedEndpointFallback = profile.policyNoUnvalidatedEndpointFallback
             runtimePolicyFailFastIfNoProfileMatch = profile.policyFailFastIfNoProfileMatch
@@ -4841,7 +4867,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             )
             Log.i(
                 TAG,
-                "runtime PCM profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }}, persistent=${runtimeRootPlaybackPersistentSession}, strictStream=$runtimeStrictStreamOnly)",
+                "runtime PCM profile loaded from ${profileFile.absolutePath} (id=${profile.profileId}, playback=${ROOT_PLAYBACK_DEVICE_CANDIDATES}, capture=${ROOT_CAPTURE_CANDIDATES.map { it.device }}, captureRateOverrides=${runtimeCaptureRequestRateOverrides}, captureChannelOverrides=${runtimeCaptureRequestChannelOverrides}, captureEffectiveOverrides=${runtimeCaptureEffectiveRateOverrides}, persistent=${runtimeRootPlaybackPersistentSession}, strictStream=$runtimeStrictStreamOnly)",
             )
         }.onFailure { error ->
             CommandAuditLog.add("voice_bridge:profile:load_error:${error.message?.take(80)}")
@@ -4906,6 +4932,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runtimeRouteRestoreCommands = defaultRootRouteRestoreCommands(runtimeRootTinymixBin)
         runtimeCaptureProbeSetCommands = defaultRootCaptureProbeSetCommands(runtimeRootTinymixBin)
         runtimeCaptureProbeRestoreCommands = defaultRootCaptureProbeRestoreCommands(runtimeRootTinymixBin)
+        runtimeCaptureRequestRateOverrides = emptyMap()
+        runtimeCaptureRequestChannelOverrides = emptyMap()
+        runtimeCaptureEffectiveRateOverrides = emptyMap()
         runtimePolicyStrictReliabilityMode = DEFAULT_POLICY_STRICT_RELIABILITY_MODE
         runtimePolicyNoUnvalidatedEndpointFallback = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
         runtimePolicyFailFastIfNoProfileMatch = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
@@ -5003,8 +5032,35 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
 
         val captureRoot = root.optJSONObject("capture")
-        val captureValidatedPrimaryDevice = captureRoot
-            ?.optJSONObject("validated_primary")
+        val capturePrimary = captureRoot?.optJSONObject("validated_primary")
+        val captureValidatedSecondary = captureRoot?.optJSONArray("validated_secondary")
+        val captureEndpointEntries = buildList<JSONObject> {
+            capturePrimary?.let { add(it) }
+            if (captureValidatedSecondary != null) {
+                for (index in 0 until captureValidatedSecondary.length()) {
+                    captureValidatedSecondary.optJSONObject(index)?.let { add(it) }
+                }
+            }
+        }
+        val captureRequestRateOverrides = mutableMapOf<Int, Int>()
+        val captureRequestChannelOverrides = mutableMapOf<Int, Int>()
+        val captureEffectiveRateOverrides = mutableMapOf<Int, Int>()
+        captureEndpointEntries.forEach { endpoint ->
+            val device = endpoint.optInt("device", -1)
+            if (device <= 0) {
+                return@forEach
+            }
+            endpoint.optInt("request_sample_rate", -1)
+                .takeIf { it > 0 }
+                ?.let { captureRequestRateOverrides[device] = it }
+            endpoint.optInt("request_channels", -1)
+                .takeIf { it > 0 }
+                ?.let { captureRequestChannelOverrides[device] = it }
+            endpoint.optInt("effective_sample_rate", -1)
+                .takeIf { it > 0 }
+                ?.let { captureEffectiveRateOverrides[device] = it }
+        }
+        val captureValidatedPrimaryDevice = capturePrimary
             ?.optInt("device", -1)
             ?.takeIf { it > 0 }
             ?: -1
@@ -5109,6 +5165,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             captureCandidates = captureCandidates,
             strictCaptureCandidates = strictCaptureCandidates,
             captureStrictStreamOnly = captureStrictStreamOnly,
+            captureRequestRateOverrides = captureRequestRateOverrides,
+            captureRequestChannelOverrides = captureRequestChannelOverrides,
+            captureEffectiveRateOverrides = captureEffectiveRateOverrides,
             rootSuPath = rootSuPath,
             rootTinycapBin = rootTinycapBin,
             rootTinyplayBin = rootTinyplayBin,
@@ -5262,6 +5321,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val captureCandidates: List<RootCaptureCandidate>,
         val strictCaptureCandidates: List<Int>,
         val captureStrictStreamOnly: Boolean,
+        val captureRequestRateOverrides: Map<Int, Int>,
+        val captureRequestChannelOverrides: Map<Int, Int>,
+        val captureEffectiveRateOverrides: Map<Int, Int>,
         val rootSuPath: String,
         val rootTinycapBin: String,
         val rootTinyplayBin: String,
@@ -5456,7 +5518,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val STARTUP_NO_AUDIO_UNPIN_THRESHOLD = 4
         private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 4
         private const val STARTUP_FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 4
-        private const val NO_AUDIO_UNPIN_THRESHOLD = 20
+        private const val NO_AUDIO_UNPIN_THRESHOLD = 3
         private const val ENFORCE_CALL_MUTE = false
         private const val ENABLE_FOREGROUND_NOTIFICATION = true
         private const val SEND_GREETING_ON_CONNECT = true
@@ -5476,7 +5538,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_SPEAKER_SIMILARITY = 0.52
         private const val FRAME_MS = 20
         private const val CLARIFICATION_COOLDOWN_MS = 2_800L
-        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 0L
+        private const val POST_PLAYBACK_CAPTURE_DELAY_MS = 260L
         private const val LISTEN_SPEAKER_VOLUME_FRACTION = 0.45
         private const val TTS_SPEAKER_VOLUME_FRACTION = 0.80
         private const val PROBE_CAPTURE_MS = 480
@@ -5509,7 +5571,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
         private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 320L
         private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 2
-        private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 20
+        private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 3
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
         private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.20
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
@@ -5595,23 +5657,23 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.68
         private const val FIRST_TURNS_FORCE_FALLBACK = 0
         private const val MAX_CAPTURE_ATTEMPTS_PER_TURN = 3
-        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(1800, 2200, 2600)
+        private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(900, 1200, 1500)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
         private const val ENABLE_STRICT_STREAM_ONLY = true
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 120
         private const val UTTERANCE_PRE_ROLL_MS = 1_200
-        private const val UTTERANCE_MIN_SPEECH_MS = 100
+        private const val UTTERANCE_MIN_SPEECH_MS = 180
         private const val UTTERANCE_SILENCE_MS = 520
-        private const val FAST_POST_PLAYBACK_SILENCE_MS = 220
+        private const val FAST_POST_PLAYBACK_SILENCE_MS = 340
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 3_000L
         private const val FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD = 2
-        private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 20
+        private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 4
         private const val UTTERANCE_MAX_TURN_MS = 8_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
-        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 700
-        private const val UTTERANCE_VAD_RMS = 80.0
+        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 2200
+        private const val UTTERANCE_VAD_RMS = 45.0
         private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
-        private const val UTTERANCE_VAD_RMS_FALLBACK = 120.0
+        private const val UTTERANCE_VAD_RMS_FALLBACK = 70.0
         private const val WEBRTC_VAD_FRAME_SAMPLES = 320
         private const val WEBRTC_VAD_SPEECH_MS = 60
         private const val WEBRTC_VAD_SILENCE_MS = 280
@@ -5640,6 +5702,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_ADAPTIVE_ASR_ATTEMPTS_BEFORE_EARLY_EXIT = 2
         private const val ENABLE_SPARK_TURN_STREAM = false
         private const val ENABLE_SPARK_STREAM_LIVE_PLAYBACK = false
+        private const val ENABLE_LOCAL_TRANSCRIPT_HINT = false
         private const val SPARK_TURN_STREAM_READ_TIMEOUT_MS = 90_000
         private const val TURN_ECHO_REJECT_OVERLAP_THRESHOLD = 0.70
         private const val ECHO_RETRY_DELAY_MS = 120L
@@ -5658,6 +5721,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Regex("^(z\\s*){6,}$"),
         )
         private val SOURCE_ROTATE_IMMEDIATELY_REASONS = setOf(
+            "no_audio_source",
             "speaker_mismatch",
             "clipping",
             "flat_signal",

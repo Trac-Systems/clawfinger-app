@@ -71,20 +71,22 @@
       "device": 20,
       "name": "incall_cap_0",
       "request_sample_rate": 48000,
+      "effective_sample_rate": 24000,
       "request_channels": 2,
       "normalized_channels": 1,
       "bits": 16,
-      "notes": "Primary validated capture source from the stable baseline profile"
+      "notes": "Primary validated capture source from the stable baseline profile; effective rate corrected for current modem route"
     },
     "validated_secondary": [
       {
         "device": 21,
         "name": "incall_cap_1",
         "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
         "request_channels": 2,
         "normalized_channels": 1,
         "bits": 16,
-        "notes": "Secondary validated capture source for newly activated PCM route"
+        "notes": "Secondary validated capture source for newly activated PCM route; effective rate corrected for current modem route"
       }
     ],
     "tuning": {
