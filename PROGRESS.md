@@ -3712,3 +3712,21 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:33 — Switched to deterministic embedded turn-beep with large post-reply gap
+
+### What
+- Re-enabled embedded beep mode (`ENABLE_EMBEDDED_READY_BEEP = true`).
+- Increased embedded beep separation and audibility:
+  - `READY_BEEP_TAIL_GAP_MS = 760`
+  - `READY_BEEP_DURATION_MS = 360`
+  - `READY_BEEP_FREQUENCY_HZ = 760`
+  - `READY_BEEP_AMPLITUDE = 0.42`
+
+### Why
+- Standalone post-turn beep still underlapped/missed on remote path.
+- Embedding beep in the same playback stream guarantees ordering: reply audio completes, then silence gap, then beep.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
