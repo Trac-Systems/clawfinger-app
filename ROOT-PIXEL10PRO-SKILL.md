@@ -1,4 +1,4 @@
-# ROOT-SKILL-PIXEL10PRO
+# ROOT-PIXEL10PRO-SKILL
 
 ## Purpose
 Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
