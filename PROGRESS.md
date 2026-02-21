@@ -3685,3 +3685,17 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:24 — Increased post-reply beep offset to avoid residual overlap
+
+### What
+- Increased standalone ready-beep start delay:
+  - `READY_BEEP_START_DELAY_MS: 180 -> 320`
+
+### Why
+- User reports beep is audible but still partially underlapping the reply tail.
+- Additional delay shifts beep into clearly separated post-reply window.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
