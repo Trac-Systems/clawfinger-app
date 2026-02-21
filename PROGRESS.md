@@ -4116,3 +4116,16 @@ _Last updated: 2026-02-19_
 
 ### Expected effect
 - Faster first greeting response and fewer no-greeting races in short/early-hang calls.
+
+## 2026-02-21 18:06 — Removed stream path from greeting turn to cut startup delay
+
+### Why this change
+- Greeting still arrived too late in live calls while playback path itself was healthy.
+- Greeting path was still using generic `callSparkTurn(...)` wrapper (stream-first behavior), which can add avoidable startup latency.
+
+### Change
+- `requestGreeting()` now calls `callSparkTurnJson(...)` directly.
+- Kept `skipAsr=true` and `resetSession=true`.
+- Added explicit greeting latency telemetry in logs/audit:
+  - `spark greeting turn latency=<ms>`
+  - `voice_bridge:greeting_turn_ms:<ms>`

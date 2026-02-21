@@ -342,8 +342,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (speaking.get()) return
         speaking.set(true)
         networkExecutor.execute {
+            val greetingTurnStartedAt = System.currentTimeMillis()
             val response = runCatching {
-                callSparkTurn(
+                callSparkTurnJson(
                     transcript = "Output exactly this and nothing else: Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead.",
                     audioWav = buildSilenceWav(),
                     skipAsr = true,
@@ -353,6 +354,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 Log.e(TAG, "spark greeting failed", error)
                 CommandAuditLog.add("voice_bridge:error:${error.message}")
             }.getOrNull()
+            val greetingTurnLatencyMs = System.currentTimeMillis() - greetingTurnStartedAt
+            CommandAuditLog.add("voice_bridge:greeting_turn_ms:$greetingTurnLatencyMs")
+            Log.i(TAG, "spark greeting turn latency=${greetingTurnLatencyMs}ms")
             val reply = sanitizeReply(response?.reply?.trim().orEmpty())
             if (reply.isBlank()) {
                 speaking.set(false)
