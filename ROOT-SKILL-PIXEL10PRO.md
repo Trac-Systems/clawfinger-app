@@ -52,9 +52,13 @@ Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
 
 ### rootd local staging (temporary)
 - Create temporary `phone/rootd/` during setup.
-- Stage:
-  - `phone/rootd/phonebridge-root-handler.sh`
-  - `phone/rootd/phonebridge-rootd.sh`
+- Pull the currently deployed scripts first (source of truth):
+  - `adb shell '/data/adb/ap/bin/su -c cat /data/adb/service.d/phonebridge-root-handler.sh' > phone/rootd/phonebridge-root-handler.sh`
+  - `adb shell '/data/adb/ap/bin/su -c cat /data/adb/service.d/phonebridge-rootd.sh' > phone/rootd/phonebridge-rootd.sh`
+- Edit/replace only if needed, then push back:
+  - `adb shell '/data/adb/ap/bin/su -c \"cat > /data/adb/service.d/phonebridge-root-handler.sh\"' < phone/rootd/phonebridge-root-handler.sh`
+  - `adb shell '/data/adb/ap/bin/su -c \"cat > /data/adb/service.d/phonebridge-rootd.sh\"' < phone/rootd/phonebridge-rootd.sh`
+  - `adb shell '/data/adb/ap/bin/su -c \"chmod 755 /data/adb/service.d/phonebridge-root-handler.sh /data/adb/service.d/phonebridge-rootd.sh\"'`
 - Push both scripts to `/data/adb/service.d/`.
 - Delete local `phone/rootd/` after successful deployment.
 
