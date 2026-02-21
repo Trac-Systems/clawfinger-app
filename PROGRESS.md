@@ -4121,3 +4121,19 @@ _Last updated: 2026-02-19_
 
 ### Why
 - Removes false-positive success path that was masking real audibility failure and causing no-greeting behavior.
+
+## 2026-02-21 18:31 — Profile test: disable period tuning flags for tinyplay
+
+### Evidence driving this test
+- Active-call logs show all playback candidates exiting instantly (`playedMs=0`) with `expectedMs` in seconds.
+- That indicates tinyplay command path exits before actual playback.
+
+### Hypothesis
+- Explicit ALSA period flags (`-p/-n`) in current profile are invalid for current modem/PCM state and force immediate tinyplay exit.
+
+### Profile-only test change
+- `playback.validated_primary.period_size: 0`
+- `playback.validated_primary.period_count: 0`
+
+### Intent
+- Remove `-p/-n` from tinyplay command path and re-check whether playback duration becomes non-zero and greeting becomes audible.
