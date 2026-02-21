@@ -4129,3 +4129,16 @@ _Last updated: 2026-02-19_
 - Added explicit greeting latency telemetry in logs/audit:
   - `spark greeting turn latency=<ms>`
   - `voice_bridge:greeting_turn_ms:<ms>`
+
+## 2026-02-21 18:12 — Re-enabled per-call playback auto-calibration (device audibility)
+
+### Why
+- Latest no-greeting calls showed fast greeting generation + successful `tinyplay`, but remote side still heard nothing.
+- That points to playback endpoint audibility mismatch (command success != audible path).
+
+### Change
+- Re-enabled `ENABLE_ROOT_PLAYBACK_AUTOCALIBRATION = true`.
+- Existing calibration path probes all playback candidates against in-call capture and selects best-scoring device per call.
+
+### Goal
+- Recover greeting audibility when device 29 is accepted by tinyplay but not actually audible on remote leg.
