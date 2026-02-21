@@ -736,26 +736,37 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startCaptureLoopWithReadyCue(delayMs: Long, reason: String) {
-        startCaptureLoop(delayMs)
-        Thread({
-            maybePlayReadyBeepCue(reason)
-        }, "pb-ready-beep").start()
-    }
-
-    private fun maybePlayReadyBeepCue(reason: String) {
         if (!ENABLE_READY_BEEP_CUE || !ENABLE_ROOT_PCM_BRIDGE) {
+            startCaptureLoop(delayMs)
             return
         }
+        mainHandler.postDelayed({
+            if (!serviceActive.get() || !InCallStateHolder.hasLiveCall()) {
+                return@postDelayed
+            }
+            Thread({
+                val played = maybePlayReadyBeepCue(reason)
+                startCaptureLoop(
+                    if (played) READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS else 0L,
+                )
+            }, "pb-ready-beep").start()
+        }, delayMs.coerceAtLeast(0L))
+    }
+
+    private fun maybePlayReadyBeepCue(reason: String): Boolean {
+        if (!ENABLE_READY_BEEP_CUE || !ENABLE_ROOT_PCM_BRIDGE) {
+            return false
+        }
         if (!InCallStateHolder.hasLiveCall()) {
-            return
+            return false
         }
         val now = System.currentTimeMillis()
         val last = lastReadyCueAtMs.get()
         if (now - last < READY_BEEP_MIN_INTERVAL_MS) {
-            return
+            return false
         }
         if (!lastReadyCueAtMs.compareAndSet(last, now)) {
-            return
+            return false
         }
         val wavBytes = readyBeepWavCache ?: buildReadyBeepWav().also { readyBeepWavCache = it }
         val result = playReplyViaRootPcm(
@@ -770,6 +781,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             CommandAuditLog.add("voice_bridge:ready_beep_fail:$reason")
             Log.w(TAG, "ready beep failed: $reason")
         }
+        return result.played
     }
 
     private fun noAudioUnpinThreshold(): Int {
@@ -4409,6 +4421,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val READY_BEEP_AMPLITUDE = 0.18
         private const val READY_BEEP_ATTACK_MS = 10
         private const val READY_BEEP_RELEASE_MS = 20
+        private const val READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS = 60L
         private const val CAPTURE_RETRY_DELAY_MS = 120L
         private const val TRANSCRIPT_RETRY_DELAY_MS = 260L
         private const val NO_AUDIO_RETRY_DELAY_MS = 450L

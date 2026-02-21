@@ -3532,3 +3532,28 @@ _Last updated: 2026-02-19_
 ### Next
 1. Live-call verify pitch on the currently audible endpoint with new per-endpoint rate map.
 2. If still off, add runtime endpoint-rate calibration pass and lock pair per call.
+
+## 2026-02-21 05:54 — Ready-beep/capture race fix to reduce choppy turn starts
+
+### What
+- Serialized ready-cue and capture loop startup to remove overlap:
+  - `startCaptureLoopWithReadyCue(...)` now plays ready beep first, then starts capture.
+  - removed the previous concurrent `startCaptureLoop(...) + beep thread` race.
+- Updated `maybePlayReadyBeepCue(...)` to return a boolean (`played`) so capture can start with a deterministic follow-up delay.
+- Added `READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS = 60` to let the beep tail clear before capture starts.
+
+### Why
+- Log evidence showed capture began, then ready beep launched during the first capture pass.
+- That overlap produced strict-stream retries and user-visible beep/chop artifacts.
+
+### Result
+- Beep and first post-reply capture are now ordered instead of competing for the same route window.
+- This directly targets the reported symptom: "choppiness skipped the beep".
+
+### Validation
+- `cd app-android && ./gradlew :app:compileDebugKotlin` passed.
+- `scripts/android-build-debug.sh && scripts/android-install-debug.sh` passed on `59191FDCH000YV`.
+
+### Next
+1. Run a live call to confirm beep is consistent and post-reply pickup remains stable.
+2. If residual choppiness persists, reduce/disable ready beep for non-greeting turns only.
