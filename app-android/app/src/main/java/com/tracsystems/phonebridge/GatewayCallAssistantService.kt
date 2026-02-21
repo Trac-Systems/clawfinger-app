@@ -99,10 +99,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeCaptureRequestRateOverrides: Map<Int, Int> = emptyMap()
     private var runtimeCaptureRequestChannelOverrides: Map<Int, Int> = emptyMap()
     private var runtimeCaptureEffectiveRateOverrides: Map<Int, Int> = emptyMap()
-    private var runtimeCaptureDurationByAttemptMs: List<Int> = CAPTURE_DURATION_BY_ATTEMPT_MS
-    private var runtimeUtteranceMinSpeechMs: Int = UTTERANCE_MIN_SPEECH_MS
-    private var runtimeFastPostPlaybackSilenceMs: Int = FAST_POST_PLAYBACK_SILENCE_MS
-    private var runtimeLocalTranscriptHintEnabled: Boolean = ENABLE_LOCAL_TRANSCRIPT_HINT
     private var runtimePolicyNoUnvalidatedEndpointFallback: Boolean = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
     private var runtimePolicyFailFastIfNoProfileMatch: Boolean = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
     private var runtimeProfileLoaded: Boolean = false
@@ -132,6 +128,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val lastPlaybackEndedAtMs = AtomicLong(0L)
     private val postPlaybackCaptureFlushPending = AtomicBoolean(false)
     private val lastReadyCueAtMs = AtomicLong(0L)
+    private val captureLoopGeneration = AtomicLong(0L)
     private var readyBeepWavCache: ByteArray? = null
     private val rootBootstrapInFlight = AtomicBoolean(false)
     @Volatile
@@ -193,6 +190,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             Log.i(TAG, "service stop requested")
+            captureLoopGeneration.incrementAndGet()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -216,7 +214,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260222-stability-cleanup-a")
+            Log.i(TAG, "build marker: 20260222-capture-flow-cleanup-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             if (!runtimeProfileLoaded) {
@@ -225,6 +223,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            captureLoopGeneration.incrementAndGet()
             speaking.set(false)
             sessionId = null
             selectedAudioSource = null
@@ -283,6 +282,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         tts?.stop()
         tts?.shutdown()
         tts = null
+        captureLoopGeneration.incrementAndGet()
         mainHandler.removeCallbacks(silenceWatchdog)
         if (callMuteEnforced.compareAndSet(true, false)) {
             InCallStateHolder.setCallMuted(false)
@@ -824,10 +824,16 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startCaptureLoop(delayMs: Long) {
+        val generation = captureLoopGeneration.incrementAndGet()
+        scheduleCaptureLoop(delayMs = delayMs, generation = generation)
+    }
+
+    private fun scheduleCaptureLoop(delayMs: Long, generation: Long) {
         mainHandler.postDelayed({
+            if (captureLoopGeneration.get() != generation) return@postDelayed
             if (!serviceActive.get()) return@postDelayed
             if (speaking.get()) {
-                startCaptureLoop(120L)
+                scheduleCaptureLoop(delayMs = 120L, generation = generation)
                 return@postDelayed
             }
             if (!InCallStateHolder.hasLiveCall()) {
@@ -837,30 +843,41 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             Log.i(TAG, "capture loop tick")
             requestReplyFromAudioFallback()
-        }, delayMs)
+        }, delayMs.coerceAtLeast(0L))
     }
 
     private fun startCaptureLoopWithReadyCue(delayMs: Long, reason: String) {
+        val generation = captureLoopGeneration.incrementAndGet()
         if (runtimeEmbeddedReadyBeepEnabled) {
-            startCaptureLoop(delayMs)
+            scheduleCaptureLoop(delayMs = delayMs, generation = generation)
             return
         }
         if (!ENABLE_READY_BEEP_CUE || !ENABLE_ROOT_PCM_BRIDGE) {
-            startCaptureLoop(delayMs)
+            scheduleCaptureLoop(delayMs = delayMs, generation = generation)
             return
         }
         if (!runtimeReadyBeepEveryTurn && !reason.startsWith("greeting")) {
-            startCaptureLoop(delayMs)
+            scheduleCaptureLoop(delayMs = delayMs, generation = generation)
             return
         }
         mainHandler.postDelayed({
+            if (captureLoopGeneration.get() != generation) {
+                return@postDelayed
+            }
             if (!serviceActive.get() || !InCallStateHolder.hasLiveCall()) {
                 return@postDelayed
             }
             Thread({
+                if (captureLoopGeneration.get() != generation) {
+                    return@Thread
+                }
                 val played = maybePlayReadyBeepCue(reason)
-                startCaptureLoop(
-                    if (played) READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS else 0L,
+                if (captureLoopGeneration.get() != generation) {
+                    return@Thread
+                }
+                scheduleCaptureLoop(
+                    delayMs = if (played) READY_BEEP_CAPTURE_FOLLOWUP_DELAY_MS else 0L,
+                    generation = generation,
                 )
             }, "pb-ready-beep").start()
         }, delayMs.coerceAtLeast(0L))
@@ -1070,7 +1087,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 rms >= UTTERANCE_VAD_RMS
             }
             val softStartCandidate = rms >= UTTERANCE_SOFT_START_RMS
-            var appendChunk = true
 
             if (!speakingNow) {
                 if (!voiced) {
@@ -1112,9 +1128,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 silenceSamples += chunkSamples
             }
 
-            if (appendChunk) {
-                current.write(pcm)
-            }
+            current.write(pcm)
             appendRootRollingPrebuffer(captured)
             chunkCount += 1
             val totalSamples = current.size() / 2
@@ -1978,14 +1992,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun maybeRecoverRootRoute() {
-        maybeRecoverRootRoute(
-            force = false,
-            reason = "unspecified",
-            noAudioStreak = consecutiveNoAudioRejects,
-        )
-    }
-
     private fun maybeRecoverRootRoute(
         force: Boolean,
         reason: String,
@@ -2385,6 +2391,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } else {
             rawWavBytes
         }
+        resetCaptureStreamBeforePlayback(
+            reason = if (replyTextForEcho.isNullOrBlank()) "aux" else "reply",
+        )
         val normalizedByFormat = mutableMapOf<Triple<Int, Int, Int>, Pair<ByteArray, Long>>()
         ensureRootPlaybackCalibrated(reason = "reply_playback", force = false)
         val lockDeviceForCall = runtimeRootPlaybackLockDeviceForCall && rootPlaybackProfileLockedForCall
@@ -2508,6 +2517,13 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         stopRootPersistentPlaybackSession(reason = "reply_playback_failed")
         rootPlaybackCalibratedForCall = false
         return RootPlaybackResult(played = false, interrupted = false)
+    }
+
+    private fun resetCaptureStreamBeforePlayback(reason: String) {
+        stopRootCaptureStreamSession("pre_playback:$reason")
+        clearRootRollingPrebuffer()
+        postPlaybackCaptureFlushPending.set(false)
+        CommandAuditLog.add("voice_bridge:capture_reset_pre_playback:$reason")
     }
 
     private fun playReplyViaRootPersistentSession(
@@ -2803,37 +2819,11 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Long.MAX_VALUE
         }
         var nextProbeAt = startedAt + BARGE_IN_ARM_DELAY_MS
-        var preArmAttempts = 0
-        var nextPreArmAt = if (
-            ENABLE_POST_PLAYBACK_CAPTURE_PREARM &&
-            expectedStopAt != Long.MAX_VALUE &&
-            POST_PLAYBACK_PREARM_MAX_ATTEMPTS > 0
-        ) {
-            max(
-                startedAt + POST_PLAYBACK_PREARM_MIN_START_AFTER_MS,
-                expectedStopAt - POST_PLAYBACK_PREARM_WINDOW_MS,
-            )
-        } else {
-            Long.MAX_VALUE
-        }
         while (System.currentTimeMillis() < deadline) {
             val now = System.currentTimeMillis()
             if (!InCallStateHolder.hasLiveCall()) {
                 stopRootPlaybackProcess(pid)
                 return RootPlaybackResult(played = false, interrupted = false)
-            }
-            if (
-                nextPreArmAt != Long.MAX_VALUE &&
-                now >= nextPreArmAt &&
-                preArmAttempts < POST_PLAYBACK_PREARM_MAX_ATTEMPTS
-            ) {
-                preArmAttempts += 1
-                val preArmed = tryPrearmPostPlaybackCapture(device = device, attempt = preArmAttempts)
-                if (preArmed) {
-                    nextPreArmAt = Long.MAX_VALUE
-                } else {
-                    nextPreArmAt = now + POST_PLAYBACK_PREARM_RETRY_MS
-                }
             }
             if (!isRootProcessAlive(pid)) {
                 val elapsedMs = (now - startedAt).coerceAtLeast(0L)
@@ -2888,22 +2878,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             interrupted = false,
             timedOut = true,
         )
-    }
-
-    private fun tryPrearmPostPlaybackCapture(device: Int, attempt: Int): Boolean {
-        val session = ensureRootCaptureStreamSession()
-        if (session == null) {
-            CommandAuditLog.add("voice_bridge:post_playback_prearm:session_null:$device:a$attempt")
-            return false
-        }
-        val frame = readRootCaptureStreamChunk(session, POST_PLAYBACK_PREARM_CHUNK_MS)
-        if (frame != null && frame.pcm.isNotEmpty()) {
-            appendRootRollingPrebuffer(frame)
-            CommandAuditLog.add("voice_bridge:post_playback_prearm:ok:$device:a$attempt:bytes=${frame.pcm.size}")
-        } else {
-            CommandAuditLog.add("voice_bridge:post_playback_prearm:bound:$device:a$attempt")
-        }
-        return true
     }
 
     private fun isRootProcessAlive(pid: Int): Boolean {
@@ -3836,7 +3810,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val channels: Int,
         val bitsPerSample: Int,
         val pid: Int,
-        var pendingData: ByteArray = ByteArray(0),
     )
 
     private data class AssembledUtterance(
@@ -4450,7 +4423,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             channels = requestedChannels,
             bitsPerSample = ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE,
             pid = pid,
-            pendingData = ByteArray(0),
         )
     }
 
@@ -4543,15 +4515,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         timeoutMs: Long,
     ): ByteArray? {
         val output = ByteArrayOutputStream(targetBytes.coerceAtLeast(256))
-        if (session.pendingData.isNotEmpty()) {
-            val consume = minOf(targetBytes, session.pendingData.size)
-            output.write(session.pendingData, 0, consume)
-            session.pendingData = if (consume < session.pendingData.size) {
-                session.pendingData.copyOfRange(consume, session.pendingData.size)
-            } else {
-                ByteArray(0)
-            }
-        }
         val deadline = System.currentTimeMillis() + timeoutMs
         val buffer = ByteArray(4096)
         while (output.size() < targetBytes && System.currentTimeMillis() < deadline) {
@@ -4584,7 +4547,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         session: RootCaptureStreamSession,
         reason: String,
     ): Int {
-        session.pendingData = ByteArray(0)
         val maxBytes = ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_MAX_BYTES
         val deadline = System.currentTimeMillis() + ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_TIMEOUT_MS
         val scratch = ByteArray(4096)
@@ -5766,12 +5728,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_PLAYBACK_EARLY_EXIT_MIN_SUCCESS_MS = 180L
         private const val ROOT_PLAYBACK_EARLY_EXIT_GUARD_MIN_EXPECTED_MS = 900L
         private const val PLAYBACK_STUCK_GRACE_MS = 350L
-        private const val ENABLE_POST_PLAYBACK_CAPTURE_PREARM = true
-        private const val POST_PLAYBACK_PREARM_WINDOW_MS = 900L
-        private const val POST_PLAYBACK_PREARM_MIN_START_AFTER_MS = 300L
-        private const val POST_PLAYBACK_PREARM_RETRY_MS = 180L
-        private const val POST_PLAYBACK_PREARM_MAX_ATTEMPTS = 4
-        private const val POST_PLAYBACK_PREARM_CHUNK_MS = 120
         private const val ROOT_PLAY_START_TIMEOUT_MS = 2_500L
         private const val ROOT_ROUTE_TIMEOUT_MS = 8_000L
         private const val ENABLE_ROOT_ROUTE_RECOVER_ON_NO_AUDIO = false
