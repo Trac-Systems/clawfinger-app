@@ -210,7 +210,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260221-capture-stability-a")
+            Log.i(TAG, "build marker: 20260221-capture-stability-b")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             speaking.set(false)
@@ -5549,10 +5549,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val NO_AUDIO_RETRY_DELAY_MS = 450L
         private const val BARGE_IN_RESUME_DELAY_MS = 40L
         private const val ENABLE_STARTUP_CAPTURE_RECOVERY = true
-        private const val STARTUP_NO_AUDIO_UNPIN_THRESHOLD = 4
-        private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 4
-        private const val STARTUP_FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 4
-        private const val NO_AUDIO_UNPIN_THRESHOLD = 3
+        private const val STARTUP_NO_AUDIO_UNPIN_THRESHOLD = 10
+        private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 12
+        private const val STARTUP_FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 12
+        private const val NO_AUDIO_UNPIN_THRESHOLD = 8
         private const val ENFORCE_CALL_MUTE = false
         private const val ENABLE_FOREGROUND_NOTIFICATION = true
         private const val SEND_GREETING_ON_CONNECT = true
@@ -5605,7 +5605,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
         private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 320L
         private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 2
-        private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 3
+        private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 10
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
         private const val ROOT_CAPTURE_STREAM_MIN_CHUNK_FILL_RATIO = 0.20
         private const val ROOT_CAPTURE_TRAILING_EXTENSION_ENABLED = true
@@ -5701,10 +5701,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val FAST_POST_PLAYBACK_SILENCE_MS = 520
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 1_200L
         private const val FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD = 2
-        private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 4
+        private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 12
         private const val UTTERANCE_MAX_TURN_MS = 8_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
-        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 2200
+        private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 4200
         private const val UTTERANCE_VAD_RMS = 45.0
         private const val ENABLE_WEBRTC_VAD_TURN_DETECT = true
         private const val UTTERANCE_VAD_RMS_FALLBACK = 70.0
