@@ -127,6 +127,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val lastSpeechActivityAtMs = AtomicLong(0L)
     private val lastPlaybackEndedAtMs = AtomicLong(0L)
     private val postPlaybackCaptureFlushPending = AtomicBoolean(false)
+    private val skipNextPostPlaybackBacklogFlush = AtomicBoolean(false)
     private val lastReadyCueAtMs = AtomicLong(0L)
     private val captureLoopGeneration = AtomicLong(0L)
     private var readyBeepWavCache: ByteArray? = null
@@ -214,7 +215,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (serviceActive.compareAndSet(false, true)) {
             Log.i(TAG, "service started")
-            Log.i(TAG, "build marker: 20260222-turn2-streamretry-a")
+            Log.i(TAG, "build marker: 20260222-turn2-backlogskip-a")
             CommandAuditLog.add("voice_bridge:start")
             loadRuntimePcmProfile()
             if (!runtimeProfileLoaded) {
@@ -294,6 +295,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         turnVad = null
         startupRecoveryActive = false
         postPlaybackCaptureFlushPending.set(false)
+        skipNextPostPlaybackBacklogFlush.set(false)
         rootCaptureCalibratedForCall = false
         rootPlaybackCalibratedForCall = false
         restoreRootCallRouteProfile()
@@ -457,9 +459,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     val utterance = captureUtteranceStateMachine()
                     if (utterance == null) {
                         lastRejectionReason = "utterance_empty"
+                        consecutiveNoAudioRejects = 0
                         if (!strictStreamOnly) {
-                            stopRootCaptureStreamSession("state_machine_empty_fallback")
-                            Log.w(TAG, "state-machine utterance empty; falling back to capture probes (strictStream=$strictStreamOnly)")
+                            stopRootCaptureStreamSession("state_machine_empty_retry")
+                            Log.w(TAG, "state-machine utterance empty; scheduling stream retry (strictStream=$strictStreamOnly)")
                         } else {
                             stopRootCaptureStreamSession("state_machine_empty_retry_strict")
                             maybeRecoverRootRoute(
@@ -1031,10 +1034,16 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (!streamBacklogEvaluated) {
                 streamBacklogEvaluated = true
                 val pendingFlush = postPlaybackCaptureFlushPending.get()
+                val skipFlush = skipNextPostPlaybackBacklogFlush.getAndSet(false)
                 val sincePlaybackMs = nowMs - lastPlaybackEndedAtMs.get()
                 val withinPostPlaybackWindow = sincePlaybackMs in 0..POST_PLAYBACK_STREAM_BACKLOG_FLUSH_WINDOW_MS
                 if (pendingFlush || withinPostPlaybackWindow) {
                     clearRootRollingPrebuffer()
+                    if (skipFlush) {
+                        postPlaybackCaptureFlushPending.set(false)
+                        CommandAuditLog.add("voice_bridge:root_stream_backlog_flush_skip:post_playback_reset")
+                        continue
+                    }
                     val reason = if (pendingFlush) {
                         "pending_post_playback:${sincePlaybackMs}ms"
                     } else {
@@ -2530,6 +2539,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         stopRootCaptureStreamSession("pre_playback:$reason")
         clearRootRollingPrebuffer()
         postPlaybackCaptureFlushPending.set(false)
+        skipNextPostPlaybackBacklogFlush.set(true)
         CommandAuditLog.add("voice_bridge:capture_reset_pre_playback:$reason")
     }
 
