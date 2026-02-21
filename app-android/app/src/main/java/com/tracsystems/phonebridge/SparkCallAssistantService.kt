@@ -4711,7 +4711,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             RootCaptureCandidate(device = 22, name = "incall_cap_2"),
             RootCaptureCandidate(device = 54, name = "incall_cap_3"),
         )
-        private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(29, 23, 18, 19)
+        private val ROOT_PLAYBACK_DEVICE_CANDIDATES = listOf(23)
         private val ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = mapOf(
             29 to 48_000,
             23 to 48_000,

@@ -3730,3 +3730,16 @@ _Last updated: 2026-02-19_
 ### Validation
 - `./gradlew :app:compileDebugKotlin` passed.
 - Built + installed debug APK on `59191FDCH000YV`.
+
+## 2026-02-21 06:27 — Forced playback endpoint 23 only (strict pin test)
+
+### What
+- Set playback candidates to a single endpoint:
+  - `ROOT_PLAYBACK_DEVICE_CANDIDATES = [23]`
+
+### Why
+- User requested strict endpoint pin test on `23` with no fallback/rotation.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- Built + installed debug APK on `59191FDCH000YV`.
