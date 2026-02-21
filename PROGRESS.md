@@ -3891,3 +3891,26 @@ _Last updated: 2026-02-19_
 - APK rebuilt + installed on device.
 - Profile pushed to device runtime path:
   - `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`.
+
+## 2026-02-21 07:34 — Wired root binaries, route profile, and policy into runtime profile
+
+### What
+- `root_binaries` now drives runtime command paths:
+  - `su`, `tinycap`, `tinyplay`, `tinymix`.
+- `route_profile` now drives runtime route application:
+  - uses `route_profile.set` and `route_profile.restore` command arrays.
+- Root bootstrap commands are now built from runtime profile values (no fixed binary path strings).
+- `policy` is now wired:
+  - `strict_reliability_mode`
+  - `no_unvalidated_endpoint_fallback`
+  - `fail_fast_if_no_profile_match`
+- Strict policy enforcement now applies profile strict endpoint lists:
+  - playback from `playback.recommended_strict_mode` (fallback: validated primary)
+  - capture from `capture.recommended_strict_mode` (fallback: validated primary)
+- Runtime capture-probe route commands now derive from runtime `tinymix` binary.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.
+- APK rebuilt + reinstalled on Pixel.
+- Profile re-pushed to `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`.
+- Dial test executed to `+4915129135779`; logs show normal call transition and assistant service startup.

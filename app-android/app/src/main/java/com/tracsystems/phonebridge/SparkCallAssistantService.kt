@@ -72,6 +72,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeReadyBeepFrequencyHz: Int = READY_BEEP_FREQUENCY_HZ
     private var runtimeReadyBeepAmplitude: Double = READY_BEEP_AMPLITUDE
     private var runtimeReadyBeepTailGapMs: Int = READY_BEEP_TAIL_GAP_MS
+    private var runtimeRootSuPath: String = ROOT_SU_BIN
+    private var runtimeRootTinycapBin: String = ROOT_TINYCAP_BIN
+    private var runtimeRootTinyplayBin: String = ROOT_TINYPLAY_BIN
+    private var runtimeRootTinymixBin: String = ROOT_TINYMIX_BIN
+    private var runtimeRouteSetCommands: List<String> = defaultRootRouteSetCommands(ROOT_TINYMIX_BIN)
+    private var runtimeRouteRestoreCommands: List<String> = defaultRootRouteRestoreCommands(ROOT_TINYMIX_BIN)
+    private var runtimeCaptureProbeSetCommands: List<String> = defaultRootCaptureProbeSetCommands(ROOT_TINYMIX_BIN)
+    private var runtimeCaptureProbeRestoreCommands: List<String> = defaultRootCaptureProbeRestoreCommands(ROOT_TINYMIX_BIN)
+    private var runtimePolicyStrictReliabilityMode: Boolean = DEFAULT_POLICY_STRICT_RELIABILITY_MODE
+    private var runtimePolicyNoUnvalidatedEndpointFallback: Boolean = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
+    private var runtimePolicyFailFastIfNoProfileMatch: Boolean = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
     private var adaptiveCaptureSampleRate: Int? = null
     private var adaptiveCaptureRateLocked: Boolean = false
     private var adaptiveCaptureRateNoInfoStreak: Int = 0
@@ -1622,7 +1633,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val seconds = max(1, (paddedDurationMs + 999) / 1000 + ROOT_CAPTURE_PRECISE_EXTRA_SECONDS)
         val rawFile = File(filesDir, "pb-rootcap-$device-${System.currentTimeMillis()}.pcm")
         val command = buildString {
-            append(ROOT_TINYCAP_BIN)
+            append(runtimeRootTinycapBin)
             append(" -- -D 0 -d ")
             append(device)
             append(" -c ")
@@ -1692,7 +1703,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val seconds = max(1, (durationMs + 499) / 1000)
         val wavFile = File(filesDir, "pb-rootcap-$device-${System.currentTimeMillis()}.wav")
         val command = buildString {
-            append(ROOT_TINYCAP_BIN)
+            append(runtimeRootTinycapBin)
             append(" ")
             append(shellQuote(wavFile.absolutePath))
             append(" -D 0 -d ")
@@ -2002,9 +2013,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun applyRootCaptureProbeRoute(enable: Boolean): Boolean {
         val commands = if (enable) {
-            ROOT_CALL_CAPTURE_PROBE_SET_COMMANDS
+            runtimeCaptureProbeSetCommands
         } else {
-            ROOT_CALL_CAPTURE_PROBE_RESTORE_COMMANDS
+            runtimeCaptureProbeRestoreCommands
         }
         val result = RootShellRuntime.run(commands.joinToString(" ; "), timeoutMs = ROOT_ROUTE_TIMEOUT_MS)
         return if (result.ok) {
@@ -2270,7 +2281,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         channels: Int,
     ): Int? {
         val command = buildString {
-            append(ROOT_TINYPLAY_BIN)
+            append(runtimeRootTinyplayBin)
             append(" ")
             append(shellQuote(wavFile.absolutePath))
             append(" -D 0 -d ")
@@ -3859,7 +3870,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         bitsPerSample: Int,
     ): Int? {
         val command = buildString {
-            append(ROOT_TINYPLAY_BIN)
+            append(runtimeRootTinyplayBin)
             append(" ")
             append(shellQuote(fifoFile.absolutePath))
             append(" -D 0 -d ")
@@ -3976,7 +3987,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         bitsPerSample: Int,
     ): Int? {
         val command = buildString {
-            append(ROOT_TINYCAP_BIN)
+            append(runtimeRootTinycapBin)
             append(" --")
             append(" -D 0 -d ")
             append(device)
@@ -4413,8 +4424,41 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 CommandAuditLog.add("voice_bridge:profile:parse_none:${profileFile.absolutePath}")
                 return@onSuccess
             }
-            ROOT_CAPTURE_CANDIDATES = profile.captureCandidates
-            ROOT_PLAYBACK_DEVICE_CANDIDATES = profile.playbackCandidates
+            runtimeRootSuPath = profile.rootSuPath
+            runtimeRootTinycapBin = profile.rootTinycapBin
+            runtimeRootTinyplayBin = profile.rootTinyplayBin
+            runtimeRootTinymixBin = profile.rootTinymixBin
+            runtimeRouteSetCommands = profile.routeSetCommands
+            runtimeRouteRestoreCommands = profile.routeRestoreCommands
+            runtimeCaptureProbeSetCommands = profile.captureProbeSetCommands
+            runtimeCaptureProbeRestoreCommands = profile.captureProbeRestoreCommands
+            runtimePolicyStrictReliabilityMode = profile.policyStrictReliabilityMode
+            runtimePolicyNoUnvalidatedEndpointFallback = profile.policyNoUnvalidatedEndpointFallback
+            runtimePolicyFailFastIfNoProfileMatch = profile.policyFailFastIfNoProfileMatch
+
+            val strictMode = runtimePolicyStrictReliabilityMode || runtimePolicyNoUnvalidatedEndpointFallback
+            val resolvedPlaybackCandidates = if (strictMode && profile.strictPlaybackCandidates.isNotEmpty()) {
+                profile.strictPlaybackCandidates
+            } else {
+                profile.playbackCandidates
+            }
+            val resolvedCaptureCandidates = if (strictMode && profile.strictCaptureCandidates.isNotEmpty()) {
+                profile.strictCaptureCandidates.map { device ->
+                    val known = ROOT_CAPTURE_CANDIDATES_DEFAULT.firstOrNull { it.device == device }
+                    RootCaptureCandidate(device = device, name = known?.name ?: "capture_$device")
+                }
+            } else {
+                profile.captureCandidates
+            }
+            if ((resolvedPlaybackCandidates.isEmpty() || resolvedCaptureCandidates.isEmpty()) && runtimePolicyFailFastIfNoProfileMatch) {
+                CommandAuditLog.add("voice_bridge:profile:fail_fast:no_strict_candidates")
+                Log.e(TAG, "profile fail-fast: no strict candidates available for current policy")
+                stopSelf()
+                return@onSuccess
+            }
+
+            ROOT_CAPTURE_CANDIDATES = resolvedCaptureCandidates
+            ROOT_PLAYBACK_DEVICE_CANDIDATES = resolvedPlaybackCandidates
             ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = profile.playbackRateOverrides
             ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = profile.playbackChannelOverrides
             ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = profile.playbackSpeedOverrides
@@ -4481,6 +4525,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES = ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES_DEFAULT
         ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES_DEFAULT
         ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT
+        runtimeRootSuPath = ROOT_SU_BIN
+        runtimeRootTinycapBin = ROOT_TINYCAP_BIN
+        runtimeRootTinyplayBin = ROOT_TINYPLAY_BIN
+        runtimeRootTinymixBin = ROOT_TINYMIX_BIN
+        runtimeRouteSetCommands = defaultRootRouteSetCommands(runtimeRootTinymixBin)
+        runtimeRouteRestoreCommands = defaultRootRouteRestoreCommands(runtimeRootTinymixBin)
+        runtimeCaptureProbeSetCommands = defaultRootCaptureProbeSetCommands(runtimeRootTinymixBin)
+        runtimeCaptureProbeRestoreCommands = defaultRootCaptureProbeRestoreCommands(runtimeRootTinymixBin)
+        runtimePolicyStrictReliabilityMode = DEFAULT_POLICY_STRICT_RELIABILITY_MODE
+        runtimePolicyNoUnvalidatedEndpointFallback = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
+        runtimePolicyFailFastIfNoProfileMatch = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
         runtimeDebugWavDumpEnabled = ENABLE_DEBUG_WAV_DUMP_DEFAULT
         runtimeDebugWavMaxFiles = MAX_DEBUG_WAV_FILES_DEFAULT
         runtimeAuditLevel = DEFAULT_AUDIT_LOG_LEVEL
@@ -4504,12 +4559,34 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val root = runCatching { JSONObject(jsonText) }.getOrNull() ?: return null
         val profileId = root.optString("profile_id").ifBlank { null }
 
+        val rootBinaries = root.optJSONObject("root_binaries")
+        val rootSuPath = rootBinaries?.optString("su")?.trim().takeIf { !it.isNullOrBlank() } ?: ROOT_SU_BIN
+        val rootTinycapBin = rootBinaries?.optString("tinycap")?.trim().takeIf { !it.isNullOrBlank() } ?: ROOT_TINYCAP_BIN
+        val rootTinyplayBin = rootBinaries?.optString("tinyplay")?.trim().takeIf { !it.isNullOrBlank() } ?: ROOT_TINYPLAY_BIN
+        val rootTinymixBin = rootBinaries?.optString("tinymix")?.trim().takeIf { !it.isNullOrBlank() } ?: ROOT_TINYMIX_BIN
+
+        val routeProfileRoot = root.optJSONObject("route_profile")
+        val routeSetCommands = parseStringArray(routeProfileRoot?.optJSONArray("set"))
+            .ifEmpty { defaultRootRouteSetCommands(rootTinymixBin) }
+        val routeRestoreCommands = parseStringArray(routeProfileRoot?.optJSONArray("restore"))
+            .ifEmpty { defaultRootRouteRestoreCommands(rootTinymixBin) }
+        val captureProbeSetCommands = defaultRootCaptureProbeSetCommands(rootTinymixBin)
+        val captureProbeRestoreCommands = defaultRootCaptureProbeRestoreCommands(rootTinymixBin)
+
         val playbackRoot = root.optJSONObject("playback")
+        val playbackValidatedPrimaryDevice = playbackRoot
+            ?.optJSONObject("validated_primary")
+            ?.optInt("device", -1)
+            ?.takeIf { it > 0 }
+            ?: -1
         val playbackCandidates = parseIntArray(playbackRoot?.optJSONArray("candidate_order_in_app"))
             .ifEmpty {
-                val validatedPrimary = playbackRoot?.optJSONObject("validated_primary")
-                val validatedDevice = validatedPrimary?.optInt("device", -1) ?: -1
-                if (validatedDevice > 0) listOf(validatedDevice) else ROOT_PLAYBACK_DEVICE_CANDIDATES_DEFAULT
+                if (playbackValidatedPrimaryDevice > 0) listOf(playbackValidatedPrimaryDevice) else ROOT_PLAYBACK_DEVICE_CANDIDATES_DEFAULT
+            }
+            .distinct()
+        val strictPlaybackCandidates = parseIntArray(playbackRoot?.optJSONArray("recommended_strict_mode"))
+            .ifEmpty {
+                if (playbackValidatedPrimaryDevice > 0) listOf(playbackValidatedPrimaryDevice) else emptyList()
             }
             .distinct()
 
@@ -4528,11 +4605,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
 
         val captureRoot = root.optJSONObject("capture")
+        val captureValidatedPrimaryDevice = captureRoot
+            ?.optJSONObject("validated_primary")
+            ?.optInt("device", -1)
+            ?.takeIf { it > 0 }
+            ?: -1
         val captureDevices = parseIntArray(captureRoot?.optJSONArray("candidate_order_in_app"))
             .ifEmpty {
-                val validatedPrimary = captureRoot?.optJSONObject("validated_primary")
-                val validatedDevice = validatedPrimary?.optInt("device", -1) ?: -1
-                if (validatedDevice > 0) listOf(validatedDevice) else ROOT_CAPTURE_CANDIDATES_DEFAULT.map { it.device }
+                if (captureValidatedPrimaryDevice > 0) listOf(captureValidatedPrimaryDevice) else ROOT_CAPTURE_CANDIDATES_DEFAULT.map { it.device }
+            }
+            .distinct()
+        val strictCaptureCandidates = parseIntArray(captureRoot?.optJSONArray("recommended_strict_mode"))
+            .ifEmpty {
+                if (captureValidatedPrimaryDevice > 0) listOf(captureValidatedPrimaryDevice) else emptyList()
             }
             .distinct()
         val captureCandidates = captureDevices.map { device ->
@@ -4579,6 +4664,19 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val beepTailGapMs = beepRoot?.optInt("tail_gap_ms", READY_BEEP_TAIL_GAP_MS)
             ?.takeIf { it >= 0 }
             ?: READY_BEEP_TAIL_GAP_MS
+        val policyRoot = root.optJSONObject("policy")
+        val policyStrictReliabilityMode = policyRoot?.optBoolean(
+            "strict_reliability_mode",
+            DEFAULT_POLICY_STRICT_RELIABILITY_MODE,
+        ) ?: DEFAULT_POLICY_STRICT_RELIABILITY_MODE
+        val policyNoUnvalidatedEndpointFallback = policyRoot?.optBoolean(
+            "no_unvalidated_endpoint_fallback",
+            DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK,
+        ) ?: DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
+        val policyFailFastIfNoProfileMatch = policyRoot?.optBoolean(
+            "fail_fast_if_no_profile_match",
+            DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH,
+        ) ?: DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
 
         if (playbackCandidates.isEmpty() || captureCandidates.isEmpty()) {
             return null
@@ -4587,10 +4685,23 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return RuntimePcmProfile(
             profileId = profileId,
             playbackCandidates = playbackCandidates,
+            strictPlaybackCandidates = strictPlaybackCandidates,
             playbackRateOverrides = playbackRates,
             playbackChannelOverrides = playbackChannels,
             playbackSpeedOverrides = playbackSpeeds,
             captureCandidates = captureCandidates,
+            strictCaptureCandidates = strictCaptureCandidates,
+            rootSuPath = rootSuPath,
+            rootTinycapBin = rootTinycapBin,
+            rootTinyplayBin = rootTinyplayBin,
+            rootTinymixBin = rootTinymixBin,
+            routeSetCommands = routeSetCommands,
+            routeRestoreCommands = routeRestoreCommands,
+            captureProbeSetCommands = captureProbeSetCommands,
+            captureProbeRestoreCommands = captureProbeRestoreCommands,
+            policyStrictReliabilityMode = policyStrictReliabilityMode,
+            policyNoUnvalidatedEndpointFallback = policyNoUnvalidatedEndpointFallback,
+            policyFailFastIfNoProfileMatch = policyFailFastIfNoProfileMatch,
             debugWavDumpEnabled = debugWavDumpEnabled,
             debugWavMaxFiles = debugWavMaxFiles,
             auditLevel = auditLevel,
@@ -4619,6 +4730,86 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return values
     }
 
+    private fun parseStringArray(array: JSONArray?): List<String> {
+        if (array == null || array.length() <= 0) {
+            return emptyList()
+        }
+        val values = ArrayList<String>(array.length())
+        for (index in 0 until array.length()) {
+            val value = array.optString(index).trim()
+            if (value.isNotBlank()) {
+                values += value
+            }
+        }
+        return values
+    }
+
+    private fun buildRootBootstrapCommands(): List<String> {
+        return listOf(
+            "echo ${shellQuote(runtimeRootSuPath)} > /data/adb/ap/su_path",
+            "pm grant com.tracsystems.phonebridge android.permission.CALL_PHONE",
+            "pm grant com.tracsystems.phonebridge android.permission.ANSWER_PHONE_CALLS",
+            "pm grant com.tracsystems.phonebridge android.permission.READ_PHONE_STATE",
+            "pm grant com.tracsystems.phonebridge android.permission.RECORD_AUDIO",
+            "pm grant com.tracsystems.phonebridge android.permission.POST_NOTIFICATIONS",
+            "chmod 755 ${shellQuote(runtimeRootTinycapBin)}",
+            "chmod 755 ${shellQuote(runtimeRootTinyplayBin)}",
+            "chmod 755 ${shellQuote(runtimeRootTinymixBin)}",
+            "appops set com.tracsystems.phonebridge CALL_PHONE allow",
+            "appops set com.tracsystems.phonebridge RECORD_AUDIO allow",
+            "appops set com.tracsystems.phonebridge READ_PHONE_STATE allow",
+            "appops set com.tracsystems.phonebridge ANSWER_PHONE_CALLS allow",
+        )
+    }
+
+    private fun defaultRootRouteSetCommands(tinymixBin: String): List<String> {
+        return listOf(
+            "$tinymixBin -D 0 set 116 IN_CALL_MUSIC",
+            "$tinymixBin -D 0 set 117 1",
+            "$tinymixBin -D 0 set 120 DL",
+            "$tinymixBin -D 0 set 121 DL",
+            "$tinymixBin -D 0 set 122 DL",
+            "$tinymixBin -D 0 set 123 DL",
+            "$tinymixBin -D 0 set 124 1",
+            "$tinymixBin -D 0 set 125 1",
+            "$tinymixBin -D 0 set 135 1",
+            "$tinymixBin -D 0 set 136 1",
+        )
+    }
+
+    private fun defaultRootRouteRestoreCommands(tinymixBin: String): List<String> {
+        return listOf(
+            "$tinymixBin -D 0 set 116 Builtin_MIC",
+            "$tinymixBin -D 0 set 117 0",
+            "$tinymixBin -D 0 set 120 Off",
+            "$tinymixBin -D 0 set 121 Off",
+            "$tinymixBin -D 0 set 122 Off",
+            "$tinymixBin -D 0 set 123 Off",
+            "$tinymixBin -D 0 set 124 0",
+            "$tinymixBin -D 0 set 125 0",
+            "$tinymixBin -D 0 set 135 0",
+            "$tinymixBin -D 0 set 136 0",
+        )
+    }
+
+    private fun defaultRootCaptureProbeSetCommands(tinymixBin: String): List<String> {
+        return listOf(
+            "$tinymixBin -D 0 set 120 UL_DL",
+            "$tinymixBin -D 0 set 121 UL_DL",
+            "$tinymixBin -D 0 set 122 UL_DL",
+            "$tinymixBin -D 0 set 123 UL_DL",
+        )
+    }
+
+    private fun defaultRootCaptureProbeRestoreCommands(tinymixBin: String): List<String> {
+        return listOf(
+            "$tinymixBin -D 0 set 120 DL",
+            "$tinymixBin -D 0 set 121 DL",
+            "$tinymixBin -D 0 set 122 DL",
+            "$tinymixBin -D 0 set 123 DL",
+        )
+    }
+
     private object SparkConfig {
         const val baseUrl = "http://192.168.178.30:8996"
         const val bearer = "41154c137d0225c8a8d1abc6f659a39811e6a40fd3851bce40da2604ae37ddf3"
@@ -4637,10 +4828,23 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private data class RuntimePcmProfile(
         val profileId: String?,
         val playbackCandidates: List<Int>,
+        val strictPlaybackCandidates: List<Int>,
         val playbackRateOverrides: Map<Int, Int>,
         val playbackChannelOverrides: Map<Int, Int>,
         val playbackSpeedOverrides: Map<Int, Double>,
         val captureCandidates: List<RootCaptureCandidate>,
+        val strictCaptureCandidates: List<Int>,
+        val rootSuPath: String,
+        val rootTinycapBin: String,
+        val rootTinyplayBin: String,
+        val rootTinymixBin: String,
+        val routeSetCommands: List<String>,
+        val routeRestoreCommands: List<String>,
+        val captureProbeSetCommands: List<String>,
+        val captureProbeRestoreCommands: List<String>,
+        val policyStrictReliabilityMode: Boolean,
+        val policyNoUnvalidatedEndpointFallback: Boolean,
+        val policyFailFastIfNoProfileMatch: Boolean,
         val debugWavDumpEnabled: Boolean,
         val debugWavMaxFiles: Int,
         val auditLevel: CommandAuditLog.Level,
@@ -4734,7 +4938,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         Thread({
             try {
-                ROOT_BOOTSTRAP_COMMANDS.forEach { command ->
+                buildRootBootstrapCommands().forEach { command ->
                     val result = RootShellRuntime.run(command)
                     val status = if (result.ok) "ok" else "err"
                     CommandAuditLog.add("root:cmd:$status:${command.substringBefore(' ')}")
@@ -4757,7 +4961,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (!ENABLE_ROOT_PCM_BRIDGE || !ENABLE_ROOT_CALL_ROUTE_PROFILE) {
             return
         }
-        val command = ROOT_CALL_ROUTE_SET_COMMANDS.joinToString(" ; ")
+        val command = runtimeRouteSetCommands.joinToString(" ; ")
         val result = RootShellRuntime.run(command, timeoutMs = ROOT_ROUTE_TIMEOUT_MS)
         val status = if (result.ok) "ok" else "err"
         CommandAuditLog.add("root:route_set_batch:$status")
@@ -4775,7 +4979,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (!ENABLE_ROOT_PCM_BRIDGE || !ENABLE_ROOT_CALL_ROUTE_PROFILE) {
             return
         }
-        val command = ROOT_CALL_ROUTE_RESTORE_COMMANDS.joinToString(" ; ")
+        val command = runtimeRouteRestoreCommands.joinToString(" ; ")
         val result = RootShellRuntime.run(command, timeoutMs = ROOT_ROUTE_TIMEOUT_MS)
         val status = if (result.ok) "ok" else "err"
         CommandAuditLog.add("root:route_restore_batch:$status")
@@ -4895,6 +5099,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val KEEP_CALL_MUTED_DURING_TTS = false
         private const val FORCE_SPEAKER_ROUTE = false
         private const val MUTE_LOCAL_HANDSET_AUDIO = true
+        private const val ROOT_SU_BIN = "/data/adb/ap/bin/su"
         private const val ROOT_TINYCAP_BIN = "/data/adb/service.d/phonebridge-tinycap"
         private const val ROOT_TINYPLAY_BIN = "/data/adb/service.d/phonebridge-tinyplay"
         private const val ROOT_TINYMIX_BIN = "/data/adb/service.d/phonebridge-tinymix"
@@ -4981,6 +5186,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val DEFAULT_AUDIT_LOG_LEVEL = CommandAuditLog.Level.VERBOSE
         private const val DEFAULT_AUDIT_TRANSCRIPTS_ENABLED = true
         private const val DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED = true
+        private const val DEFAULT_POLICY_STRICT_RELIABILITY_MODE = false
+        private const val DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK = false
+        private const val DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH = false
         private const val MIN_TRANSCRIPT_ALNUM_CHARS = 2
         private const val MIN_TRANSCRIPT_TOKEN_COUNT = 5
         private const val MIN_TRANSCRIPT_UNIQUE_RATIO = 0.45
@@ -5044,58 +5252,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             23 to 1.50,
         )
         private var ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT
-        private val ROOT_BOOTSTRAP_COMMANDS = listOf(
-            "echo /data/adb/ap/bin/su > /data/adb/ap/su_path",
-            "pm grant com.tracsystems.phonebridge android.permission.CALL_PHONE",
-            "pm grant com.tracsystems.phonebridge android.permission.ANSWER_PHONE_CALLS",
-            "pm grant com.tracsystems.phonebridge android.permission.READ_PHONE_STATE",
-            "pm grant com.tracsystems.phonebridge android.permission.RECORD_AUDIO",
-            "pm grant com.tracsystems.phonebridge android.permission.POST_NOTIFICATIONS",
-            "chmod 755 /data/adb/service.d/phonebridge-tinycap",
-            "chmod 755 /data/adb/service.d/phonebridge-tinyplay",
-            "chmod 755 /data/adb/service.d/phonebridge-tinymix",
-            "appops set com.tracsystems.phonebridge CALL_PHONE allow",
-            "appops set com.tracsystems.phonebridge RECORD_AUDIO allow",
-            "appops set com.tracsystems.phonebridge READ_PHONE_STATE allow",
-            "appops set com.tracsystems.phonebridge ANSWER_PHONE_CALLS allow",
-        )
-        private val ROOT_CALL_ROUTE_SET_COMMANDS = listOf(
-            "$ROOT_TINYMIX_BIN -D 0 set 116 IN_CALL_MUSIC",
-            "$ROOT_TINYMIX_BIN -D 0 set 117 1",
-            "$ROOT_TINYMIX_BIN -D 0 set 120 DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 121 DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 122 DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 123 DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 124 1",
-            "$ROOT_TINYMIX_BIN -D 0 set 125 1",
-            "$ROOT_TINYMIX_BIN -D 0 set 135 1",
-            "$ROOT_TINYMIX_BIN -D 0 set 136 1",
-        )
-        private val ROOT_CALL_CAPTURE_PROBE_SET_COMMANDS = listOf(
-            "$ROOT_TINYMIX_BIN -D 0 set 120 UL_DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 121 UL_DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 122 UL_DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 123 UL_DL",
-        )
-        private val ROOT_CALL_CAPTURE_PROBE_RESTORE_COMMANDS = listOf(
-            "$ROOT_TINYMIX_BIN -D 0 set 120 DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 121 DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 122 DL",
-            "$ROOT_TINYMIX_BIN -D 0 set 123 DL",
-        )
-        private val ROOT_CALL_ROUTE_RESTORE_COMMANDS = listOf(
-            "$ROOT_TINYMIX_BIN -D 0 set 116 Builtin_MIC",
-            "$ROOT_TINYMIX_BIN -D 0 set 117 0",
-            "$ROOT_TINYMIX_BIN -D 0 set 120 Off",
-            "$ROOT_TINYMIX_BIN -D 0 set 121 Off",
-            "$ROOT_TINYMIX_BIN -D 0 set 122 Off",
-            "$ROOT_TINYMIX_BIN -D 0 set 123 Off",
-            "$ROOT_TINYMIX_BIN -D 0 set 124 0",
-            "$ROOT_TINYMIX_BIN -D 0 set 125 0",
-            "$ROOT_TINYMIX_BIN -D 0 set 135 0",
-            "$ROOT_TINYMIX_BIN -D 0 set 136 0",
-        )
-
         fun start(context: Context) {
             val intent = Intent(context, SparkCallAssistantService::class.java)
             context.startService(intent)
