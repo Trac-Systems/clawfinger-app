@@ -68,8 +68,13 @@ Use this when modem/call session shifts to another PCM endpoint.
 
 ### Capture training loop (current operating method)
 - Gate condition:
-  - If active capture endpoint is `20`, do not run capture training.
-  - Run capture training only when active capture endpoint is not `20`.
+  - Resolve active capture endpoint for the call.
+  - If `capture.endpoint_settings.<active_pcm_index>` is complete, do not run capture training.
+  - If that endpoint entry is missing, empty (`{}`), or incomplete, run capture training loop.
+- Capture entry is considered complete when all required fields exist:
+  - `request_sample_rate`
+  - `request_channels`
+  - `effective_sample_rate`
 - Required precondition:
   - profile must enable wav logging: `logging.debug_wav_dump.enabled=true`,
   - updated profile must be pushed and loaded on device before starting the loop.

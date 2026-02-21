@@ -4358,7 +4358,9 @@ _Last updated: 2026-02-19_
 
 ### Update applied
 - `VOICE-BRIDGE-SKILL.md` now explicitly defines current capture training operation:
-  - run capture training loop only when active capture endpoint is not `20`,
+  - run capture training loop based on profile completeness for the active endpoint (not on a hardcoded endpoint number),
+  - if active `capture.endpoint_settings.<pcm_index>` is missing/empty/incomplete, training loop must run,
+  - if active endpoint entry has all required capture fields, training loop is skipped,
   - each loop must pull WAV artifacts + transcriptions,
   - human listens to pulled `rxm-*` files and reports pitch status (`normal/high/low`) with filenames,
   - AI tunes only `capture.endpoint_settings.<pcm_index>`, pushes profile, and repeats until corrected.
