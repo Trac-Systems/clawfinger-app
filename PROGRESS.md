@@ -3793,3 +3793,26 @@ _Last updated: 2026-02-19_
 ### Operational rule
 - Edit `profiles/active-profile.json` (or a versioned profile), then push via `scripts/android-push-profile.sh`.
 - App behavior changes are accepted only if they are profile-driven.
+
+## 2026-02-21 07:13 — Added transition-only capture/playback shift audit logs
+
+### What
+- Added transition tracking in `SparkCallAssistantService`:
+  - `lastCaptureShiftSignature`
+  - `lastPlaybackShiftSignature`
+- Added capture/playback shift audit helpers:
+  - `logCaptureShiftIfChanged(...)`
+  - `logPlaybackShiftIfChanged(...)`
+  - `logPlaybackShiftClearedIfNeeded(...)`
+- Wired shift logging at actual change points:
+  - capture accept, capture rotate, capture calibration, stream capture bind, adaptive-rate lock
+  - playback calibration, tinyplay reply device selection, stream playback device selection
+  - playback-clear on root playback failure
+- Reset shift signatures on service start and profile reload.
+
+### Why
+- Requirement: log capture/playback endpoint shifts once when they happen.
+- Avoid repetitive per-turn endpoint logs and avoid log flooding.
+
+### Validation
+- `./gradlew :app:compileDebugKotlin` passed.

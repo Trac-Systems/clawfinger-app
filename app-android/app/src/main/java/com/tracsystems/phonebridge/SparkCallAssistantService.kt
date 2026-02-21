@@ -59,6 +59,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var selectedRootCaptureSampleRate: Int? = null
     private var selectedRootCaptureChannels: Int? = null
     private var selectedRootPlaybackDevice: Int? = null
+    private var lastCaptureShiftSignature: String? = null
+    private var lastPlaybackShiftSignature: String? = null
     private var adaptiveCaptureSampleRate: Int? = null
     private var adaptiveCaptureRateLocked: Boolean = false
     private var adaptiveCaptureRateNoInfoStreak: Int = 0
@@ -174,6 +176,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             selectedRootCaptureSampleRate = ROOT_CAPTURE_REQUEST_SAMPLE_RATE
             selectedRootCaptureChannels = 1
             selectedRootPlaybackDevice = null
+            lastCaptureShiftSignature = null
+            lastPlaybackShiftSignature = null
             adaptiveCaptureSampleRate = null
             adaptiveCaptureRateLocked = false
             adaptiveCaptureRateNoInfoStreak = 0
@@ -705,6 +709,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     maybeRecoverRootRoute()
                     markSpeechActivity("root_playback_failed")
                     selectedRootPlaybackDevice = null
+                    logPlaybackShiftClearedIfNeeded("root_playback_failed")
                     speaking.set(false)
                     startCaptureLoop(POST_PLAYBACK_CAPTURE_DELAY_MS)
                     return@execute
@@ -1395,6 +1400,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             selectedRootCaptureSource = candidate
             selectedRootCaptureSampleRate = captured.sampleRate
             selectedRootCaptureChannels = captured.channels
+            logCaptureShiftIfChanged("capture_accept")
             markSpeechActivity("root_audio:${candidate.name}")
             CommandAuditLog.add(
                 "voice_bridge:root_source:${candidate.name}:rms=${"%.1f".format(analysis.overallRms)}:conf=${"%.2f".format(analysis.confidence)}",
@@ -1812,6 +1818,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         selectedRootCaptureSource = next
         rootCaptureCalibratedForCall = false
         CommandAuditLog.add("voice_bridge:root_source_rotate:${next.name}")
+        logCaptureShiftIfChanged("rotate")
     }
 
     private fun resetRootCapturePin(reason: String) {
@@ -1839,6 +1846,41 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         rootCaptureCalibratedForCall = true
         CommandAuditLog.add("voice_bridge:root_source_pinned:${source.name}")
         Log.i(TAG, "root capture source pinned: ${source.name}(${source.device})")
+    }
+
+    private fun logCaptureShiftIfChanged(reason: String) {
+        val source = selectedRootCaptureSource ?: return
+        val sampleRate = (selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE).coerceAtLeast(8_000)
+        val channels = (selectedRootCaptureChannels ?: ROOT_CAPTURE_PRIMARY_CHANNELS).coerceAtLeast(1)
+        val signature = "d${source.device}:r$sampleRate:c$channels"
+        if (signature == lastCaptureShiftSignature) {
+            return
+        }
+        val previous = lastCaptureShiftSignature ?: "none"
+        lastCaptureShiftSignature = signature
+        CommandAuditLog.add("voice_bridge:shift:capture:$previous->$signature:$reason")
+        Log.i(TAG, "capture shift $previous -> $signature ($reason)")
+    }
+
+    private fun logPlaybackShiftIfChanged(device: Int, reason: String) {
+        val rate = playbackSampleRateForDevice(device)
+        val channels = playbackChannelsForDevice(device)
+        val speed = playbackSpeedCompensationForDevice(device)
+        val signature = "d$device:r$rate:c$channels:s${"%.2f".format(Locale.US, speed)}"
+        if (signature == lastPlaybackShiftSignature) {
+            return
+        }
+        val previous = lastPlaybackShiftSignature ?: "none"
+        lastPlaybackShiftSignature = signature
+        CommandAuditLog.add("voice_bridge:shift:playback:$previous->$signature:$reason")
+        Log.i(TAG, "playback shift $previous -> $signature ($reason)")
+    }
+
+    private fun logPlaybackShiftClearedIfNeeded(reason: String) {
+        val previous = lastPlaybackShiftSignature ?: return
+        lastPlaybackShiftSignature = null
+        CommandAuditLog.add("voice_bridge:shift:playback:$previous->none:$reason")
+        Log.i(TAG, "playback shift cleared ($reason), previous=$previous")
     }
 
     private fun ensureRootCaptureCalibrated(reason: String, force: Boolean) {
@@ -1882,6 +1924,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             rootCapturePinned = true
             rootCaptureCalibratedForCall = true
             CommandAuditLog.add("voice_bridge:capture_calibration:${best.name}:$reason")
+            logCaptureShiftIfChanged("capture_calibration:$reason")
             Log.i(TAG, "root capture calibrated source=${best.name}(${best.device}) reason=$reason")
         } finally {
             rootCaptureCalibrationInFlight.set(false)
@@ -1939,6 +1982,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             CommandAuditLog.add(
                 "voice_bridge:playback_calibration:d${best.key}:score=${"%.1f".format(best.value)}:$reason",
             )
+            logPlaybackShiftIfChanged(best.key, "playback_calibration:$reason")
             Log.i(TAG, "root playback calibrated device=${best.key} score=${best.value} reason=$reason")
         } finally {
             rootPlaybackCalibrationInFlight.set(false)
@@ -2128,9 +2172,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     continue
                 }
                 selectedRootPlaybackDevice = device
-                CommandAuditLog.add(
-                    "voice_bridge:root_playback_device:$device:r$playbackRate:c$playbackChannels:s${"%.2f".format(playbackSpeedComp)}",
-                )
+                logPlaybackShiftIfChanged(device, "tinyplay_reply")
                 val playbackResult = monitorRootPlayback(
                     pid = pid,
                     device = device,
@@ -3160,6 +3202,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             adaptiveCaptureRateLocked = true
             selectedRootCaptureSampleRate = selected.sampleRate
             CommandAuditLog.add("voice_bridge:adaptive_rate_lock:${selected.sampleRate}:score=${selected.score}:attempts=${selected.attempts}")
+            logCaptureShiftIfChanged("adaptive_rate_lock")
             if (selected.sampleRate != fallbackRate) {
                 stopRootCaptureStreamSession("adaptive_rate_lock:${selected.sampleRate}")
             }
@@ -3777,7 +3820,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
 
             selectedRootPlaybackDevice = device
-            CommandAuditLog.add("voice_bridge:root_stream_device:$device")
+            logPlaybackShiftIfChanged(device, "stream_playback_session")
             return RootStreamPlaybackSession(
                 fifoFile = fifoFile,
                 outputStream = output,
@@ -3851,6 +3894,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         rootCaptureStreamSession = started
         selectedRootCaptureSampleRate = started.rawSampleRate
         selectedRootCaptureChannels = 1
+        logCaptureShiftIfChanged("stream_capture_session")
         CommandAuditLog.add("voice_bridge:root_stream_capture:${source.name}")
         return started
     }
@@ -4353,6 +4397,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = profile.playbackChannelOverrides
             ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = profile.playbackSpeedOverrides
             selectedRootPlaybackDevice = null
+            lastCaptureShiftSignature = null
+            lastPlaybackShiftSignature = null
             rootPlaybackCalibratedForCall = false
             CommandAuditLog.add(
                 "voice_bridge:profile:loaded:${profile.profileId ?: "unnamed"}:pb=${ROOT_PLAYBACK_DEVICE_CANDIDATES.joinToString(",")}:cap=${ROOT_CAPTURE_CANDIDATES.joinToString(",") { it.device.toString() }}",
