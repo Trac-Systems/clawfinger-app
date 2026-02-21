@@ -4142,3 +4142,18 @@ _Last updated: 2026-02-19_
 
 ### Goal
 - Recover greeting audibility when device 29 is accepted by tinyplay but not actually audible on remote leg.
+
+## 2026-02-21 18:16 — Profile retune for playback blip (device 29)
+
+### Observation
+- Remote side reports tiny/high-pitch blip instead of full greeting voice.
+- `tinyplay` succeeds, indicating command/path is up but rendering parameters are likely mismatched.
+
+### Profile adjustment (no code)
+- `playback.validated_primary` retuned:
+  - `sample_rate: 24000`
+  - `channels: 1`
+  - `speed_compensation: 1.0`
+
+### Goal
+- Remove short/blip rendering and restore intelligible greeting playback on current active route.
