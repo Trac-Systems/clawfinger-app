@@ -1002,8 +1002,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             var appendChunk = true
 
             if (!speakingNow) {
-                preRoll = appendAndTrimBytes(preRoll, pcm, thresholds.preRollMaxBytes)
                 if (!voiced) {
+                    preRoll = appendAndTrimBytes(preRoll, pcm, thresholds.preRollMaxBytes)
                     appendRootRollingPrebuffer(captured)
                     if (elapsedMs >= UTTERANCE_NO_SPEECH_TIMEOUT_MS) {
                         CommandAuditLog.add("voice_bridge:utterance_no_speech_timeout:unvoiced")
@@ -1013,11 +1013,13 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 speakingNow = true
                 current.reset()
-                val rollingPrebuffer = consumeRootRollingPrebuffer(sampleRate)
-                if (rollingPrebuffer.isNotEmpty()) {
-                    current.write(rollingPrebuffer)
-                } else if (preRoll.isNotEmpty()) {
+                if (preRoll.isNotEmpty()) {
                     current.write(preRoll)
+                } else {
+                    val rollingPrebuffer = consumeRootRollingPrebuffer(sampleRate)
+                    if (rollingPrebuffer.isNotEmpty()) {
+                        current.write(rollingPrebuffer)
+                    }
                 }
                 speechSamples = chunkSamples
                 silenceSamples = 0
