@@ -4103,3 +4103,16 @@ _Last updated: 2026-02-19_
 
 ### Why
 - Keeps IN_CALL_MUSIC route pinned right at playback moment, reducing race/drift between service start routing and first greeting playback.
+
+## 2026-02-21 18:00 — Reduced greeting latency by skipping ASR on greeting turn
+
+### Symptom
+- Greeting often arrived too late or not at all in short calls.
+- Logs showed greeting network request completing after call teardown (`InterruptedIOException`) in failing runs.
+
+### Fix
+- For `requestGreeting()`, switched greeting turn call to `skipAsr = true`.
+- Greeting already sends explicit `transcript_hint`; ASR on silence was unnecessary overhead.
+
+### Expected effect
+- Faster first greeting response and fewer no-greeting races in short/early-hang calls.

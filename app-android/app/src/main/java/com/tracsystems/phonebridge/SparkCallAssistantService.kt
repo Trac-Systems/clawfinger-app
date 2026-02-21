@@ -346,6 +346,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 callSparkTurn(
                     transcript = "Output exactly this and nothing else: Hi, I am Markus' assistant. Wait for the beep before responding. I don't want to pretend I am human, so let's agree on this. Please go ahead.",
                     audioWav = buildSilenceWav(),
+                    skipAsr = true,
                     resetSession = true,
                 )
             }.onFailure { error ->
