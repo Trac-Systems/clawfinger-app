@@ -291,15 +291,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 maxSentences = GREETING_MAX_REPLY_SENTENCES,
                 maxChars = GREETING_MAX_REPLY_CHARS,
             )
-            val compliantGreeting = isGreetingReplyCompliant(modelReply)
-            val localTtsAvailable = tts != null
-            val useExactGreetingFallback = !compliantGreeting && localTtsAvailable
-            val allowBackendGreetingAudio = !useExactGreetingFallback
-            val reply = when {
-                useExactGreetingFallback -> GREETING_EXACT_TEXT
-                modelReply.isNotBlank() -> modelReply
-                else -> GREETING_EXACT_TEXT
-            }
+            val allowBackendGreetingAudio = isGreetingReplyCompliant(modelReply)
+            val reply = if (allowBackendGreetingAudio) modelReply else GREETING_EXACT_TEXT
             if (reply.isBlank()) {
                 speaking.set(false)
                 startCaptureLoop(TRANSCRIPT_RETRY_DELAY_MS)
@@ -346,12 +339,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             Log.i(TAG, "spark greeting: ${reply.take(96)}")
             mainHandler.post {
-                if (tts == null) {
-                    Log.w(TAG, "greeting local TTS unavailable; resuming capture loop")
-                    speaking.set(false)
-                    startCaptureLoop(NO_AUDIO_RETRY_DELAY_MS)
-                    return@post
-                }
                 val utteranceId = "pb-${UUID.randomUUID()}"
                 tts?.speak(reply, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
                 CommandAuditLog.add("voice_bridge:greeting:${reply.take(96)}")
