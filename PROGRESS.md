@@ -4175,3 +4175,26 @@ _Last updated: 2026-02-19_
 ### Expected impact
 - Prevents fallback capture path from being muted by AppOps foreground gating.
 - Improves turn understanding reliability when root capture path temporarily falls back.
+
+## 2026-02-21 18:50 — Fixed FGS manifest mismatch and locked capture to remote-call audio path
+
+### Root cause (verified in logcat)
+- `startForeground` was still failing at runtime with:
+  - `foregroundServiceType 0x00000084 is not a subset of ... 0x00000004`
+- That meant `SparkCallAssistantService` was launched without microphone FGS type, and Android could silence fallback record paths.
+
+### Changes
+- Updated `app-android/app/src/main/AndroidManifest.xml`:
+  - `SparkCallAssistantService` foreground type changed from `phoneCall` to `phoneCall|microphone`.
+- Updated `profiles/pixel10pro-blazer-profile-v1.json`:
+  - `capture.tuning.strict_stream_only: true`
+  - `policy.no_unvalidated_endpoint_fallback: true`
+
+### Validation
+- Fresh call logs now show:
+  - no `startForeground skipped` error,
+  - profile loaded with `playback=[29]`, `capture=[20]`, `strictStream=true`,
+  - successful state-machine transcript + Spark turn + root playback:
+    - transcript: `Can you recommend me a good movie?`
+    - reply generated and played via root PCM on device 29.
+- Immediate hangup observed earlier in one probe run was caused by scripted test hangup command, not by watchdog/autohang path.

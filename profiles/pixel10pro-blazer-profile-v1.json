@@ -77,7 +77,7 @@
       "notes": "Pinned as working capture source in recent successful turns"
     },
     "tuning": {
-      "strict_stream_only": false
+      "strict_stream_only": true
     },
     "candidate_order_in_app": [20],
     "recommended_strict_mode": [20]
@@ -103,7 +103,7 @@
   },
   "policy": {
     "strict_reliability_mode": false,
-    "no_unvalidated_endpoint_fallback": false,
+    "no_unvalidated_endpoint_fallback": true,
     "fail_fast_if_no_profile_match": false,
     "route_recover_on_no_audio": false,
     "route_recover_min_no_audio_streak": 10,
