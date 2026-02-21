@@ -1,139 +1,83 @@
 # VOICE-BRIDGE-SKILL
 
 ## Purpose
-Canonical runbook for Pixel call audio capture/playback + Spark voice gateway integration (ASR/LLM/TTS) with streaming-safe guardrails.
+Runbook for rooted Pixel telephony audio bridge + Spark voice gateway (ASR/LLM/TTS), with profile-driven tuning only.
 
-## Dependency
-- Root prerequisites are defined in `phone/ROOT-SKILL-PIXEL10PRO.md`.
-- Voice bridge assumes APatch root + `rootd` are already working.
+## Dependencies
+- Root setup: `phone/ROOT-SKILL-PIXEL10PRO.md`
+- App service: `phone/app-android/app/src/main/java/com/tracsystems/phonebridge/SparkCallAssistantService.kt`
 
-## Current known-good flow (2026-02-21)
-- Root PCM bridge handles both directions:
-  - RX: tinycap capture from in-call downlink.
-  - TX: tinyplay injects synthesized assistant audio to remote caller.
-- Active profile file controls runtime routing/tuning:
-  - device path: `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`
-  - source file: `phone/profiles/pixel10pro-blazer-profile-v1.json`
-- Gateway turn flow is server-ASR authoritative:
-  1) capture utterance on phone,
-  2) ASR on Spark,
-  3) `POST /api/turn` with transcript and audio,
-  4) root tinyplay output to remote caller.
+## Runtime architecture
+- RX path: in-call downlink PCM (`tinycap`) -> gateway ASR/turn -> TTS WAV.
+- TX path: TTS WAV -> in-call uplink PCM (`tinyplay`) -> remote caller.
+- Call flow is server-ASR authoritative (`/api/turn`); no app-side hardcoded intent logic.
 
-## Runtime prerequisites
-- Keep lock screen set to `None` or `Swipe` (no PIN/password).
-- Confirm user 0 is unlocked:
+## Profile source of truth
+- Local profile file: `phone/profiles/pixel10pro-blazer-profile-v1.json`
+- Device active profile path: `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`
+- No hardcoded per-endpoint tuning in app code.
+
+### Required profile sections
+- `root_binaries`
+- `route_profile.set` / `route_profile.restore`
+- `playback.candidate_order_in_app`
+- `playback.endpoint_settings.<pcm_index>`
+  - `sample_rate`, `channels`, optional `speed_compensation`
+- `playback.tuning`
+  - `persistent_session`, `lock_device_for_call`, `prebuffer_ms`, `period_size`, `period_count`, `mmap`
+- `capture.candidate_order_in_app`
+- `capture.endpoint_settings.<pcm_index>`
+  - `request_sample_rate`, `request_channels`, `effective_sample_rate`
+- `capture.tuning.strict_stream_only`
+- `beep`
+- `logging`
+- `policy`
+
+## Deploy profile
+1. Push: `./scripts/android-push-profile.sh profiles/pixel10pro-blazer-profile-v1.json`
+2. Confirm on device:
+   - `adb shell cat /sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`
+3. Restart app/service if needed and place a call.
+
+## Operational prerequisites
+- Lock screen must be `None` or `Swipe`.
+- User 0 unlocked:
   - `adb shell dumpsys user | grep RUNNING_UNLOCKED`
-- Keep `PhoneBridge` battery mode on `Unrestricted`.
+- Battery mode for app: `Unrestricted`.
 
-## Telephony audio device map
-### Capture (RX from remote caller)
-- Candidate capture devices:
-  - `20`, `21`, `22`, `54`
-- Runtime behavior:
-  - adaptive sample-rate fallback,
-  - selected source carried forward between turns.
+## Gateway contract
+- Health:
+  - `curl -H "Authorization: Bearer <token>" http://192.168.178.30:8996/health`
+- Voice endpoints:
+  - `POST /api/asr`
+  - `POST /api/turn`
 
-### Playback (TX to remote caller)
-- Playback devices:
-  - primary `29`
-  - fallback candidates from profile.
+## Endpoint training workflow
+Use this when modem/call session shifts to another PCM endpoint.
 
-## Route profile (critical)
-- Apply at call start:
-  - `Voice Call Mic Source` -> `IN_CALL_MUSIC`
-  - `Incall Capture Stream0..3` -> `DL`
-  - `Incall Playback Stream0..1` -> `On`
-  - `Incall Mic Mute` -> `On`
-  - `Incall Sink Mute` -> `On`
-- Restore all to baseline at teardown.
+1. Start a real call (human pickup required).
+2. Pull logs and debug wavs for that call.
+3. Identify active endpoints from logs:
+   - capture shift / capture pinned
+   - playback shift / playback selected
+4. Tune only that endpoint in local profile:
+   - capture: `request_sample_rate`, `request_channels`, `effective_sample_rate`
+   - playback: `sample_rate`, `channels`, optional `speed_compensation`
+5. Push updated profile and retest.
+6. Repeat until quality and transcription are stable.
 
-## Spark gateway contract
-### Base
-- Gateway URL: `http://192.168.178.30:8996`
-- Bearer token source: `spark2.txt` (`voice_gateway_bearer_token`)
+## Acceptance criteria
+- Greeting audible to remote caller.
+- Minimum 3 stable turns without losing capture.
+- No persistent high/low pitch artifacts in pulled `rxm-*` wavs.
+- Transcripts remain semantically aligned with what caller said.
 
-### Endpoints
-- `POST /api/asr`
-  - input: WAV
-  - output: transcript + ASR metrics
-  - includes silence/noise hallucination suppression.
-- `POST /api/turn`
-  - input: turn audio + transcript metadata
-  - output: reply text + TTS WAV + per-stage metrics.
-
-## App files that must stay aligned
-- `phone/app-android/app/src/main/java/com/tracsystems/phonebridge/SparkCallAssistantService.kt`
-- `phone/app-android/app/src/main/java/com/tracsystems/phonebridge/RootShellRuntime.kt`
-- `phone/app-android/app/src/main/java/com/tracsystems/phonebridge/BridgeInCallService.kt`
-- `phone/app-android/app/src/main/java/com/tracsystems/phonebridge/AndroidTelecomController.kt`
-
-## Live validation checklist
-1. Root runtime checks:
-   - `adb shell '/data/adb/ap/bin/su -c id'`
-   - `adb shell dumpsys user | grep RUNNING_UNLOCKED`
-2. Gateway check:
-   - `curl -H "Authorization: Bearer <token>" http://192.168.178.30:8996/health`
-3. Place a controlled call.
-4. Follow device logs:
-   - `adb logcat -s SparkCallAssistant BridgeInCallService`
-5. Confirm this chain:
-   - root capture source selected,
-   - ASR transcript is meaningful,
-   - root tinyplay success on `29`.
-
-## Profile-driven PCM training loop (mandatory)
-- Do not hardcode endpoint tuning in app code.
-- Keep the known-good endpoint in profile; add newly activated endpoints as secondary.
-
-### Procedure
-1. Ensure profile is loaded:
-   - `./scripts/android-push-profile.sh profiles/pixel10pro-blazer-profile-v1.json`
-2. Start a real call with human pickup (required).
-3. Pull latest debug wavs + transcripts for that call.
-4. Identify active capture endpoint from logs:
-   - `capture shift ...`
-   - `root capture source pinned: ...`
-5. Evaluate quality on pulled RX WAVs (`rxm-*`):
-   - pitch natural,
-   - no major clipping left/right,
-   - transcript semantically matches what human said.
-6. If active endpoint quality is bad:
-   - update `profiles/pixel10pro-blazer-profile-v1.json` for that endpoint,
-   - keep baseline endpoint unchanged,
-   - set per-endpoint `request_sample_rate`, `request_channels`, and `effective_sample_rate` as needed,
-   - add/adjust endpoint in `capture.validated_secondary`,
-   - reorder `capture.candidate_order_in_app` and `recommended_strict_mode` as needed.
-7. Push profile again and retest with another human call.
-8. Repeat until quality is stable.
-
-### Acceptance criteria
-- Greeting audible on remote side.
-- At least 3 turns without capture dropout.
-- RX WAVs are natural pitch.
-- No persistent `no_audio_source` loop on active call.
-- Captured transcript stays in-context for user requests.
-
-## Failure signatures and fixes
-### Symptom: immediate generic replies (“you’re welcome”, “goodbye”)
-- Likely cause: low-information/echo ASR hallucination.
-- Fix:
-  - keep two-stage path enabled,
-  - keep transcript quality rejection enabled,
-  - keep gateway ASR hallucination filters enabled.
-
-### Symptom: call connected but remote side hears no assistant voice
-- Check:
-  - `root tinyplay ok device=29` in logs,
-  - route profile applied before first turn,
-  - device user state is `RUNNING_UNLOCKED`.
-
-### Symptom: no capture / wrong capture source
-- Check:
-  - route recovery logs,
-  - capture candidates `20/21/22/54`,
-  - no parallel active call or duplicate dial.
-
-### Symptom: duplicate calls or call collisions
-- Keep operator-gated actions only (`call now`, `hang up`).
-- Never dial while an active call already exists.
+## Minimal troubleshooting
+- No assistant audio heard remotely:
+  - verify route set was applied, playback endpoint selected, and `tinyplay` success logs.
+- No capture after greeting:
+  - verify active capture endpoint and its profile settings; retune endpoint-specific capture rates/channels.
+- Mis-transcriptions with pitch artifacts:
+  - retune `effective_sample_rate` for active capture endpoint; keep endpoint-index mapping in profile.
+- Duplicate/overlapping call behavior:
+  - do not start a new dial while one live call exists.

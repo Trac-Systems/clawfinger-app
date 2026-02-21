@@ -1,12 +1,5 @@
 {
   "profile_id": "pixel10pro_blazer_v1",
-  "status": "active_initial",
-  "created_at": "2026-02-21",
-  "device": {
-    "model": "Pixel 10 Pro",
-    "codename": "blazer",
-    "fingerprint": "google/blazer/blazer:16/BD3A.250721.001.E1/14034804:user/release-keys"
-  },
   "root_binaries": {
     "su": "/data/adb/ap/bin/su",
     "tinycap": "/data/adb/service.d/phonebridge-tinycap",
@@ -40,60 +33,48 @@
     ]
   },
   "playback": {
-    "validated_primary": {
-      "device": 29,
-      "sample_rate": 48000,
-      "channels": 2,
-      "bits": 16,
-      "speed_compensation": 1.5,
-      "period_size": 1024,
-      "period_count": 8,
-      "mmap": false,
-      "notes": "Validated as audible/usable on remote call path in this profile"
-    },
+    "candidate_order_in_app": [29, 23, 18, 19],
     "tuning": {
       "persistent_session": false,
       "lock_device_for_call": true,
-      "prebuffer_ms": 220
+      "prebuffer_ms": 220,
+      "period_size": 1024,
+      "period_count": 8,
+      "mmap": false
     },
-    "validated_secondary": [],
-    "known_bad": [
-      {
-        "device": 23,
-        "reason": "No remote audio when hard-pinned (commit 3be20ce), reverted in 21ad82b"
-      }
-    ],
-    "candidate_order_in_app": [29, 23, 18, 19],
-    "recommended_strict_mode": [29]
+    "endpoint_settings": {
+      "29": {
+        "sample_rate": 48000,
+        "channels": 2,
+        "speed_compensation": 1.5
+      },
+      "23": {
+        "sample_rate": 48000,
+        "channels": 2
+      },
+      "18": {},
+      "19": {}
+    }
   },
   "capture": {
-    "validated_primary": {
-      "device": 20,
-      "name": "incall_cap_0",
-      "request_sample_rate": 48000,
-      "effective_sample_rate": 24000,
-      "request_channels": 2,
-      "normalized_channels": 1,
-      "bits": 16,
-      "notes": "Primary validated capture source from the stable baseline profile; effective rate corrected for current modem route"
-    },
-    "validated_secondary": [
-      {
-        "device": 21,
-        "name": "incall_cap_1",
+    "candidate_order_in_app": [20, 21, 22, 54],
+    "endpoint_settings": {
+      "20": {
         "request_sample_rate": 48000,
         "effective_sample_rate": 24000,
-        "request_channels": 2,
-        "normalized_channels": 1,
-        "bits": 16,
-        "notes": "Secondary validated capture source for newly activated PCM route; effective rate corrected for current modem route"
-      }
-    ],
+        "request_channels": 2
+      },
+      "21": {
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
+        "request_channels": 2
+      },
+      "22": {},
+      "54": {}
+    },
     "tuning": {
       "strict_stream_only": false
-    },
-    "candidate_order_in_app": [20, 21, 22, 54],
-    "recommended_strict_mode": [20, 21]
+    }
   },
   "beep": {
     "mode": "embedded_tail",
@@ -115,15 +96,10 @@
     }
   },
   "policy": {
-    "strict_reliability_mode": false,
     "no_unvalidated_endpoint_fallback": true,
     "fail_fast_if_no_profile_match": false,
     "route_recover_on_no_audio": false,
     "route_recover_min_no_audio_streak": 8,
     "route_recover_throttle_ms": 6000
-  },
-  "provenance": {
-    "source_file": "app-android/app/src/main/java/com/tracsystems/phonebridge/SparkCallAssistantService.kt",
-    "app_commit": "21ad82b"
   }
 }

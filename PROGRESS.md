@@ -4278,3 +4278,57 @@ _Last updated: 2026-02-19_
 ### Intent
 - Keep endpoint behavior strictly profile-driven and tunable without app hardcoding.
 - Enable endpoint-specific quality training loop (human pickup + wav check + profile edit + retest).
+
+## 2026-02-21 19:58 — Removed primary/secondary model, moved to endpoint-index profile selection
+
+### Requested behavior
+- No primary/secondary labels.
+- Use PCM endpoint index as identifier.
+- On call start detect active endpoint and pin it for call, with settings loaded from profile by endpoint index.
+
+### Changes
+- Profile schema switched to endpoint-index maps:
+  - `playback.endpoint_settings.<pcm_index>`
+  - `capture.endpoint_settings.<pcm_index>`
+- Removed `recommended_strict_mode` usage from runtime candidate selection.
+- Parser updated to read endpoint-index maps directly (legacy validated fields removed from active schema path).
+- Call-start calibration now runs before greeting and pins detected active capture endpoint for call.
+- Capture request/effective rate + channel selection now resolved by endpoint index.
+
+### Current profile
+- `profiles/pixel10pro-blazer-profile-v1.json` now uses endpoint-index settings only.
+- Removed `known_bad` endpoint list.
+- Added explicit endpoint inventory fields:
+  - `playback.available_endpoint_indexes`
+  - `capture.available_endpoint_indexes`
+
+## 2026-02-21 20:03 — Profile cleanup + parser aligned to endpoint-index schema only
+
+### What was cleaned
+- `profiles/pixel10pro-blazer-profile-v1.json` stripped of stale metadata and duplicate concepts:
+  - removed top-level status/device/provenance fields,
+  - removed `available_endpoint_indexes`,
+  - removed capture endpoint `name` properties,
+  - kept endpoint stubs as empty objects for untrained channels:
+    - playback `18`, `19`
+    - capture `22`, `54`.
+
+### Parser/runtime alignment
+- `SparkCallAssistantService.parseRuntimePcmProfile(...)` now resolves candidates only from:
+  - `candidate_order_in_app`, or
+  - `endpoint_settings` keys (fallback), or
+  - hardcoded defaults (last fallback).
+- Removed parser dependency on:
+  - `available_endpoint_indexes`,
+  - capture endpoint `name`.
+- Runtime still applies per-endpoint tuned values only where present (e.g. capture 20/21), and defaults for empty endpoint stubs.
+
+### Validation
+- Profile pushed to device (`profile.json`) and app force-stopped for clean reload.
+- App build passed (`:app:assembleDebug`).
+- Latest service load log confirms new profile is accepted:
+  - playback candidates `[29,23,18,19]`
+  - capture candidates `[20,21,22,54]`
+  - capture overrides present only for `20/21` (expected), stubs for `22/54` defaulting.
+- Latest observed active capture endpoint from log calibration: `22` (`incall_cap_2`).
+- No active call at check time, so no currently active playback endpoint to report.

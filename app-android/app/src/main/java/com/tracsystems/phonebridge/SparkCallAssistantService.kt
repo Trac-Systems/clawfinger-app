@@ -98,7 +98,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeUtteranceMinSpeechMs: Int = UTTERANCE_MIN_SPEECH_MS
     private var runtimeFastPostPlaybackSilenceMs: Int = FAST_POST_PLAYBACK_SILENCE_MS
     private var runtimeLocalTranscriptHintEnabled: Boolean = ENABLE_LOCAL_TRANSCRIPT_HINT
-    private var runtimePolicyStrictReliabilityMode: Boolean = DEFAULT_POLICY_STRICT_RELIABILITY_MODE
     private var runtimePolicyNoUnvalidatedEndpointFallback: Boolean = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
     private var runtimePolicyFailFastIfNoProfileMatch: Boolean = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
     private var adaptiveCaptureSampleRate: Int? = null
@@ -216,8 +215,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             sessionId = null
             selectedAudioSource = null
             selectedRootCaptureSource = ROOT_CAPTURE_CANDIDATES.firstOrNull()
-            selectedRootCaptureSampleRate = ROOT_CAPTURE_REQUEST_SAMPLE_RATE
-            selectedRootCaptureChannels = ROOT_CAPTURE_PRIMARY_CHANNELS
+            selectedRootCaptureSampleRate = selectedRootCaptureSource
+                ?.let { source -> captureEffectiveSampleRateForDevice(source.device, captureRequestSampleRateForDevice(source.device)) }
+                ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+            selectedRootCaptureChannels = 1
             selectedRootPlaybackDevice = null
             rootPlaybackProfileLockedForCall = false
             lastCaptureShiftSignature = null
@@ -242,6 +243,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             initializeRootRuntime()
             applyRootCallRouteProfile()
             CommandAuditLog.add("root:route_set_sync:done")
+            ensureRootCaptureCalibrated(reason = "service_start_pre_greeting", force = true)
             enableCallAudioRoute()
             InCallStateHolder.setSpeakerRoute(FORCE_SPEAKER_ROUTE)
             enforceCallMute()
@@ -253,11 +255,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 startCaptureLoop(40)
             }
             Thread({
-                if (!speaking.get()) {
-                    ensureRootCaptureCalibrated(reason = "service_start_post_route", force = true)
-                } else {
-                    CommandAuditLog.add("voice_bridge:capture_calibration_skip:speaking:service_start_post_route")
-                }
                 ensureRootPlaybackCalibrated(reason = "service_start_post_route", force = true)
                 CommandAuditLog.add("root:route_post_calibration:done")
             }, "pb-root-route").start()
@@ -1618,16 +1615,21 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return null
     }
 
-    private fun probeBestRootCaptureSource(sampleRate: Int): RootCaptureCandidate? {
+    private fun probeBestRootCaptureSource(): RootCaptureCandidate? {
         val probeResults = ROOT_CAPTURE_CANDIDATES.mapNotNull { source ->
+            val requestRate = captureRequestSampleRateForDevice(source.device)
+            val requestChannels = captureRequestChannelsForDevice(source.device)
             val captured = captureRootPcmForDevice(
                 device = source.device,
                 durationMs = PROBE_CAPTURE_MS,
-                sampleRate = sampleRate,
-                channels = ROOT_CAPTURE_PRIMARY_CHANNELS,
+                sampleRate = requestRate,
+                channels = requestChannels,
             ) ?: return@mapNotNull null
             val rms = rmsPcm16(captured.pcm)
-            Log.i(TAG, "audio root probe source=${source.name}(${source.device}) rms=$rms")
+            Log.i(
+                TAG,
+                "audio root probe source=${source.name}(${source.device}) request=${requestRate}Hz/${requestChannels}ch effective=${captured.sampleRate}Hz/${captured.channels}ch rms=$rms",
+            )
             RootProbeResult(source = source, rms = rms)
         }
         val best = probeResults.maxByOrNull { it.rms } ?: return null
@@ -1933,6 +1935,9 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             stopRootCaptureStreamSession("rotate_source")
         }
         selectedRootCaptureSource = next
+        val requestRate = captureRequestSampleRateForDevice(next.device)
+        selectedRootCaptureSampleRate = captureEffectiveSampleRateForDevice(next.device, requestRate)
+        selectedRootCaptureChannels = 1
         rootCaptureCalibratedForCall = false
         CommandAuditLog.add("voice_bridge:root_source_rotate:${next.name}")
         logCaptureShiftIfChanged("rotate")
@@ -2024,8 +2029,7 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         try {
             lastRootCaptureCalibrationAtMs.set(now)
-            val preferredRate = selectedRootCaptureSampleRate ?: ROOT_CAPTURE_REQUEST_SAMPLE_RATE
-            val best = probeBestRootCaptureSource(preferredRate)
+            val best = probeBestRootCaptureSource()
             if (best == null) {
                 rootCaptureCalibratedForCall = false
                 CommandAuditLog.add("voice_bridge:capture_calibration:none:$reason")
@@ -2033,7 +2037,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             val previousDevice = selectedRootCaptureSource?.device
             selectedRootCaptureSource = best
-            selectedRootCaptureSampleRate = ROOT_CAPTURE_REQUEST_SAMPLE_RATE
+            val requestRate = captureRequestSampleRateForDevice(best.device)
+            selectedRootCaptureSampleRate = captureEffectiveSampleRateForDevice(best.device, requestRate)
             selectedRootCaptureChannels = 1
             if (previousDevice != best.device || rootCaptureStreamSession?.device != best.device) {
                 stopRootCaptureStreamSession("capture_calibration:$reason")
@@ -4806,30 +4811,17 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runtimeCaptureRequestRateOverrides = profile.captureRequestRateOverrides
             runtimeCaptureRequestChannelOverrides = profile.captureRequestChannelOverrides
             runtimeCaptureEffectiveRateOverrides = profile.captureEffectiveRateOverrides
-            runtimePolicyStrictReliabilityMode = profile.policyStrictReliabilityMode
             runtimePolicyNoUnvalidatedEndpointFallback = profile.policyNoUnvalidatedEndpointFallback
             runtimePolicyFailFastIfNoProfileMatch = profile.policyFailFastIfNoProfileMatch
             runtimeEnableRouteRecoverOnNoAudio = profile.policyRouteRecoverOnNoAudio
             runtimeRootRouteRecoverMinNoAudioStreak = profile.policyRouteRecoverMinNoAudioStreak
             runtimeRootRouteRecoverThrottleMs = profile.policyRouteRecoverThrottleMs
 
-            val strictMode = runtimePolicyStrictReliabilityMode || runtimePolicyNoUnvalidatedEndpointFallback
-            val resolvedPlaybackCandidates = if (strictMode && profile.strictPlaybackCandidates.isNotEmpty()) {
-                profile.strictPlaybackCandidates
-            } else {
-                profile.playbackCandidates
-            }
-            val resolvedCaptureCandidates = if (strictMode && profile.strictCaptureCandidates.isNotEmpty()) {
-                profile.strictCaptureCandidates.map { device ->
-                    val known = ROOT_CAPTURE_CANDIDATES_DEFAULT.firstOrNull { it.device == device }
-                    RootCaptureCandidate(device = device, name = known?.name ?: "capture_$device")
-                }
-            } else {
-                profile.captureCandidates
-            }
+            val resolvedPlaybackCandidates = profile.playbackCandidates
+            val resolvedCaptureCandidates = profile.captureCandidates
             if ((resolvedPlaybackCandidates.isEmpty() || resolvedCaptureCandidates.isEmpty()) && runtimePolicyFailFastIfNoProfileMatch) {
-                CommandAuditLog.add("voice_bridge:profile:fail_fast:no_strict_candidates")
-                Log.e(TAG, "profile fail-fast: no strict candidates available for current policy")
+                CommandAuditLog.add("voice_bridge:profile:fail_fast:no_candidates")
+                Log.e(TAG, "profile fail-fast: no candidates available")
                 stopSelf()
                 return@onSuccess
             }
@@ -4935,7 +4927,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runtimeCaptureRequestRateOverrides = emptyMap()
         runtimeCaptureRequestChannelOverrides = emptyMap()
         runtimeCaptureEffectiveRateOverrides = emptyMap()
-        runtimePolicyStrictReliabilityMode = DEFAULT_POLICY_STRICT_RELIABILITY_MODE
         runtimePolicyNoUnvalidatedEndpointFallback = DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK
         runtimePolicyFailFastIfNoProfileMatch = DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH
         runtimeEnableRouteRecoverOnNoAudio = ENABLE_ROOT_ROUTE_RECOVER_ON_NO_AUDIO
@@ -4980,35 +4971,36 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val captureProbeRestoreCommands = defaultRootCaptureProbeRestoreCommands(rootTinymixBin)
 
         val playbackRoot = root.optJSONObject("playback")
-        val playbackValidatedPrimaryDevice = playbackRoot
-            ?.optJSONObject("validated_primary")
-            ?.optInt("device", -1)
-            ?.takeIf { it > 0 }
-            ?: -1
+        val playbackEndpointSettings = parseDeviceSettingsObject(playbackRoot?.optJSONObject("endpoint_settings"))
         val playbackCandidates = parseIntArray(playbackRoot?.optJSONArray("candidate_order_in_app"))
             .ifEmpty {
-                if (playbackValidatedPrimaryDevice > 0) listOf(playbackValidatedPrimaryDevice) else ROOT_PLAYBACK_DEVICE_CANDIDATES_DEFAULT
-            }
-            .distinct()
-        val strictPlaybackCandidates = parseIntArray(playbackRoot?.optJSONArray("recommended_strict_mode"))
-            .ifEmpty {
-                if (playbackValidatedPrimaryDevice > 0) listOf(playbackValidatedPrimaryDevice) else emptyList()
+                if (playbackEndpointSettings.isNotEmpty()) {
+                    playbackEndpointSettings.keys.sorted()
+                } else {
+                    ROOT_PLAYBACK_DEVICE_CANDIDATES_DEFAULT
+                }
             }
             .distinct()
 
         val playbackRates = ROOT_PLAYBACK_DEVICE_SAMPLE_RATE_OVERRIDES_DEFAULT.toMutableMap()
         val playbackChannels = ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES_DEFAULT.toMutableMap()
         val playbackSpeeds = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT.toMutableMap()
-        val playbackPrimary = playbackRoot?.optJSONObject("validated_primary")
-        val rootPlayPeriodSize = playbackPrimary?.optInt("period_size", ROOT_PLAY_PERIOD_SIZE)
+        playbackEndpointSettings.forEach { (device, settings) ->
+            settings.optInt("sample_rate", -1).takeIf { it > 0 }?.let { playbackRates[device] = it }
+            settings.optInt("channels", -1).takeIf { it > 0 }?.let { playbackChannels[device] = it }
+            settings.optDouble("speed_compensation", Double.NaN)
+                .takeIf { it.isFinite() && it > 0.0 }
+                ?.let { playbackSpeeds[device] = it }
+        }
+        val playbackTuning = playbackRoot?.optJSONObject("tuning")
+        val rootPlayPeriodSize = playbackTuning?.optInt("period_size", ROOT_PLAY_PERIOD_SIZE)
             ?.takeIf { it >= 0 }
             ?: ROOT_PLAY_PERIOD_SIZE
-        val rootPlayPeriodCount = playbackPrimary?.optInt("period_count", ROOT_PLAY_PERIOD_COUNT)
+        val rootPlayPeriodCount = playbackTuning?.optInt("period_count", ROOT_PLAY_PERIOD_COUNT)
             ?.takeIf { it >= 0 }
             ?: ROOT_PLAY_PERIOD_COUNT
-        val rootPlayUseMmap = playbackPrimary?.optBoolean("mmap", ROOT_PLAY_USE_MMAP)
+        val rootPlayUseMmap = playbackTuning?.optBoolean("mmap", ROOT_PLAY_USE_MMAP)
             ?: ROOT_PLAY_USE_MMAP
-        val playbackTuning = playbackRoot?.optJSONObject("tuning")
         val playbackPrebufferMs = playbackTuning?.optInt("prebuffer_ms", ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS)
             ?.takeIf { it >= 0 }
             ?: ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS
@@ -5020,58 +5012,29 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             "lock_device_for_call",
             ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL,
         ) ?: ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL
-        playbackPrimary?.let { primary ->
-            val device = primary.optInt("device", -1)
-            if (device > 0) {
-                primary.optInt("sample_rate", -1).takeIf { it > 0 }?.let { playbackRates[device] = it }
-                primary.optInt("channels", -1).takeIf { it > 0 }?.let { playbackChannels[device] = it }
-                primary.optDouble("speed_compensation", Double.NaN)
-                    .takeIf { it.isFinite() && it > 0.0 }
-                    ?.let { playbackSpeeds[device] = it }
-            }
-        }
-
         val captureRoot = root.optJSONObject("capture")
-        val capturePrimary = captureRoot?.optJSONObject("validated_primary")
-        val captureValidatedSecondary = captureRoot?.optJSONArray("validated_secondary")
-        val captureEndpointEntries = buildList<JSONObject> {
-            capturePrimary?.let { add(it) }
-            if (captureValidatedSecondary != null) {
-                for (index in 0 until captureValidatedSecondary.length()) {
-                    captureValidatedSecondary.optJSONObject(index)?.let { add(it) }
-                }
-            }
-        }
+        val captureEndpointSettings = parseDeviceSettingsObject(captureRoot?.optJSONObject("endpoint_settings"))
         val captureRequestRateOverrides = mutableMapOf<Int, Int>()
         val captureRequestChannelOverrides = mutableMapOf<Int, Int>()
         val captureEffectiveRateOverrides = mutableMapOf<Int, Int>()
-        captureEndpointEntries.forEach { endpoint ->
-            val device = endpoint.optInt("device", -1)
-            if (device <= 0) {
-                return@forEach
-            }
-            endpoint.optInt("request_sample_rate", -1)
+        captureEndpointSettings.forEach { (device, settings) ->
+            settings.optInt("request_sample_rate", -1)
                 .takeIf { it > 0 }
                 ?.let { captureRequestRateOverrides[device] = it }
-            endpoint.optInt("request_channels", -1)
+            settings.optInt("request_channels", -1)
                 .takeIf { it > 0 }
                 ?.let { captureRequestChannelOverrides[device] = it }
-            endpoint.optInt("effective_sample_rate", -1)
+            settings.optInt("effective_sample_rate", -1)
                 .takeIf { it > 0 }
                 ?.let { captureEffectiveRateOverrides[device] = it }
         }
-        val captureValidatedPrimaryDevice = capturePrimary
-            ?.optInt("device", -1)
-            ?.takeIf { it > 0 }
-            ?: -1
         val captureDevices = parseIntArray(captureRoot?.optJSONArray("candidate_order_in_app"))
             .ifEmpty {
-                if (captureValidatedPrimaryDevice > 0) listOf(captureValidatedPrimaryDevice) else ROOT_CAPTURE_CANDIDATES_DEFAULT.map { it.device }
-            }
-            .distinct()
-        val strictCaptureCandidates = parseIntArray(captureRoot?.optJSONArray("recommended_strict_mode"))
-            .ifEmpty {
-                if (captureValidatedPrimaryDevice > 0) listOf(captureValidatedPrimaryDevice) else emptyList()
+                if (captureEndpointSettings.isNotEmpty()) {
+                    captureEndpointSettings.keys.sorted()
+                } else {
+                    ROOT_CAPTURE_CANDIDATES_DEFAULT.map { it.device }
+                }
             }
             .distinct()
         val captureCandidates = captureDevices.map { device ->
@@ -5122,10 +5085,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             ?.takeIf { it >= 0 }
             ?: READY_BEEP_TAIL_GAP_MS
         val policyRoot = root.optJSONObject("policy")
-        val policyStrictReliabilityMode = policyRoot?.optBoolean(
-            "strict_reliability_mode",
-            DEFAULT_POLICY_STRICT_RELIABILITY_MODE,
-        ) ?: DEFAULT_POLICY_STRICT_RELIABILITY_MODE
         val policyNoUnvalidatedEndpointFallback = policyRoot?.optBoolean(
             "no_unvalidated_endpoint_fallback",
             DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK,
@@ -5158,12 +5117,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return RuntimePcmProfile(
             profileId = profileId,
             playbackCandidates = playbackCandidates,
-            strictPlaybackCandidates = strictPlaybackCandidates,
             playbackRateOverrides = playbackRates,
             playbackChannelOverrides = playbackChannels,
             playbackSpeedOverrides = playbackSpeeds,
             captureCandidates = captureCandidates,
-            strictCaptureCandidates = strictCaptureCandidates,
             captureStrictStreamOnly = captureStrictStreamOnly,
             captureRequestRateOverrides = captureRequestRateOverrides,
             captureRequestChannelOverrides = captureRequestChannelOverrides,
@@ -5182,7 +5139,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             routeRestoreCommands = routeRestoreCommands,
             captureProbeSetCommands = captureProbeSetCommands,
             captureProbeRestoreCommands = captureProbeRestoreCommands,
-            policyStrictReliabilityMode = policyStrictReliabilityMode,
             policyNoUnvalidatedEndpointFallback = policyNoUnvalidatedEndpointFallback,
             policyFailFastIfNoProfileMatch = policyFailFastIfNoProfileMatch,
             policyRouteRecoverOnNoAudio = policyRouteRecoverOnNoAudio,
@@ -5226,6 +5182,24 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (value.isNotBlank()) {
                 values += value
             }
+        }
+        return values
+    }
+
+    private fun parseDeviceSettingsObject(obj: JSONObject?): Map<Int, JSONObject> {
+        if (obj == null) {
+            return emptyMap()
+        }
+        val values = LinkedHashMap<Int, JSONObject>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val device = key.toIntOrNull() ?: continue
+            if (device <= 0) {
+                continue
+            }
+            val value = obj.optJSONObject(key) ?: continue
+            values[device] = value
         }
         return values
     }
@@ -5314,12 +5288,10 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private data class RuntimePcmProfile(
         val profileId: String?,
         val playbackCandidates: List<Int>,
-        val strictPlaybackCandidates: List<Int>,
         val playbackRateOverrides: Map<Int, Int>,
         val playbackChannelOverrides: Map<Int, Int>,
         val playbackSpeedOverrides: Map<Int, Double>,
         val captureCandidates: List<RootCaptureCandidate>,
-        val strictCaptureCandidates: List<Int>,
         val captureStrictStreamOnly: Boolean,
         val captureRequestRateOverrides: Map<Int, Int>,
         val captureRequestChannelOverrides: Map<Int, Int>,
@@ -5338,7 +5310,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val routeRestoreCommands: List<String>,
         val captureProbeSetCommands: List<String>,
         val captureProbeRestoreCommands: List<String>,
-        val policyStrictReliabilityMode: Boolean,
         val policyNoUnvalidatedEndpointFallback: Boolean,
         val policyFailFastIfNoProfileMatch: Boolean,
         val policyRouteRecoverOnNoAudio: Boolean,
@@ -5692,7 +5663,6 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val DEFAULT_AUDIT_LOG_LEVEL = CommandAuditLog.Level.VERBOSE
         private const val DEFAULT_AUDIT_TRANSCRIPTS_ENABLED = true
         private const val DEFAULT_AUDIT_DEBUG_WAV_EVENTS_ENABLED = true
-        private const val DEFAULT_POLICY_STRICT_RELIABILITY_MODE = false
         private const val DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK = false
         private const val DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH = false
         private const val MIN_TRANSCRIPT_ALNUM_CHARS = 2
