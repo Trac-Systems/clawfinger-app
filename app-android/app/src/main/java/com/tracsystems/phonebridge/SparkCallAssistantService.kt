@@ -4430,13 +4430,24 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resolveRuntimeProfileFile(): File? {
-        val external = getExternalFilesDir(null)?.let { File(it, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE") }
-        if (external != null && external.isFile) {
-            return external
+        val externalDir = getExternalFilesDir(null)
+        if (externalDir != null) {
+            val externalPrimary = File(externalDir, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE")
+            if (externalPrimary.isFile) {
+                return externalPrimary
+            }
+            val externalLegacy = File(externalDir, "$PROFILE_DIR_NAME/$PROFILE_LEGACY_ACTIVE_FILE")
+            if (externalLegacy.isFile) {
+                return externalLegacy
+            }
         }
-        val internal = File(filesDir, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE")
-        if (internal.isFile) {
-            return internal
+        val internalPrimary = File(filesDir, "$PROFILE_DIR_NAME/$PROFILE_ACTIVE_FILE")
+        if (internalPrimary.isFile) {
+            return internalPrimary
+        }
+        val internalLegacy = File(filesDir, "$PROFILE_DIR_NAME/$PROFILE_LEGACY_ACTIVE_FILE")
+        if (internalLegacy.isFile) {
+            return internalLegacy
         }
         return null
     }
@@ -4770,7 +4781,8 @@ class SparkCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_ROOT_PCM_BRIDGE = true
         private const val ENABLE_PROFILE_JSON_LOADING = true
         private const val PROFILE_DIR_NAME = "profiles"
-        private const val PROFILE_ACTIVE_FILE = "active-profile.json"
+        private const val PROFILE_ACTIVE_FILE = "profile.json"
+        private const val PROFILE_LEGACY_ACTIVE_FILE = "active-profile.json"
         private const val ENABLE_ROOT_CAPTURE_AUTOCALIBRATION = true
         private const val ENABLE_ROOT_PLAYBACK_AUTOCALIBRATION = false
         private const val ENABLE_ROOT_CALL_ROUTE_PROFILE = true

@@ -6,7 +6,7 @@ PACKAGE_NAME="com.tracsystems.phonebridge"
 SERIAL="${ANDROID_DEVICE_SERIAL:-}"
 PROFILE_SRC="${1:-$ROOT_DIR/profiles/pixel10pro-blazer-profile-v1.json}"
 DEST_DIR="/sdcard/Android/data/$PACKAGE_NAME/files/profiles"
-DEST_FILE="$DEST_DIR/active-profile.json"
+DEST_FILE="$DEST_DIR/profile.json"
 
 ADB=(adb)
 if [[ -n "$SERIAL" ]]; then

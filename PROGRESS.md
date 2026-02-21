@@ -3851,3 +3851,22 @@ _Last updated: 2026-02-19_
 ### Why
 - User requested no profile duplication/version-salad in local repo.
 - `active-profile.json` is only a device-side runtime filename; it does not need a duplicate file in repo.
+
+## 2026-02-21 07:21 — Switched device runtime profile filename to `profile.json`
+
+### What
+- Changed runtime profile filename in app from `active-profile.json` to `profile.json`.
+- Kept legacy fallback read support for `active-profile.json` to avoid breakage.
+- Updated push script destination to:
+  - `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`
+- Pushed canonical profile to phone and removed old device file:
+  - deleted `/sdcard/.../profiles/active-profile.json`
+  - verified only `profile.json` remains.
+- Triggered live call command after reload (`+4915129135779`).
+
+### Validation
+- APK rebuilt + installed.
+- Logcat confirms dial and assistant startup:
+  - `Dial command executed: +4915129135779`
+  - call state transitions `connecting -> dialing -> active`
+  - assistant root playback launched on device `29`.
