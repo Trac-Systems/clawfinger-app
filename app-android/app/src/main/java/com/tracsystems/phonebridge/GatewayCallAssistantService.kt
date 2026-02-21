@@ -1,11 +1,13 @@
 package com.tracsystems.phonebridge
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioManager
@@ -22,6 +24,7 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.konovalov.vad.webrtc.VadWebRTC
 import com.konovalov.vad.webrtc.config.FrameSize as VadFrameSize
 import com.konovalov.vad.webrtc.config.Mode as VadMode
@@ -916,14 +919,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD
         } else {
             ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD
-        }
-    }
-
-    private fun fastPostPlaybackStreamUnpinThreshold(): Int {
-        return if (startupRecoveryActive) {
-            STARTUP_FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD
-        } else {
-            FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD
         }
     }
 
@@ -3055,10 +3050,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         return out
     }
 
-    private fun parseWavSampleRate(wavBytes: ByteArray): Int? {
-        return decodeWavToPcm16Mono(wavBytes)?.sampleRate
-    }
-
     private fun resamplePcm16Mono(
         pcm: ByteArray,
         fromSampleRate: Int,
@@ -3253,6 +3244,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         durationMs: Int,
         sampleRate: Int,
     ): ByteArray? {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            CommandAuditLog.add("voice_bridge:audio_source_permission_missing:record_audio")
+            return null
+        }
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val minBuffer = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
@@ -4926,7 +4921,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
                 )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
@@ -5675,7 +5670,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ENABLE_STARTUP_CAPTURE_RECOVERY = true
         private const val STARTUP_NO_AUDIO_UNPIN_THRESHOLD = 10
         private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 12
-        private const val STARTUP_FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 12
         private const val NO_AUDIO_UNPIN_THRESHOLD = 8
         private const val ENFORCE_CALL_MUTE = false
         private const val ENABLE_FOREGROUND_NOTIFICATION = true
@@ -5726,7 +5720,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val MIN_ROOT_RAW_CAPTURE_BYTES = 320
         private const val ROOT_CAPTURE_STREAM_DURATION_SEC = 900
         private const val ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE = 16
-        private const val ROOT_CAPTURE_STREAM_HEADER_TIMEOUT_MS = 3_200L
         private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 320L
         private const val ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_TIMEOUT_MS = 180L
         private const val ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_MAX_BYTES = 262_144
@@ -5812,7 +5805,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val BARGE_IN_ENERGY_ONLY_MODE = true
         private const val BARGE_IN_ENERGY_ONLY_MIN_RMS = 24.0
         private const val BARGE_IN_ENERGY_ONLY_MIN_VOICED_MS = 80
-        private const val BARGE_IN_REQUIRE_ASR = true
         private const val BARGE_IN_MIN_ALNUM_CHARS = 2
         private const val BARGE_IN_ECHO_OVERLAP_THRESHOLD = 0.68
         private const val FIRST_TURNS_FORCE_FALLBACK = 0
@@ -5827,8 +5819,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val FAST_POST_PLAYBACK_SILENCE_MS = 520
         private const val FAST_POST_PLAYBACK_WINDOW_MS = 1_200L
         private const val POST_PLAYBACK_STREAM_BACKLOG_FLUSH_WINDOW_MS = 2_200L
-        private const val FAST_POST_PLAYBACK_STREAM_REBIND_THRESHOLD = 2
-        private const val FAST_POST_PLAYBACK_STREAM_UNPIN_THRESHOLD = 12
         private const val UTTERANCE_MAX_TURN_MS = 8_000
         private const val UTTERANCE_LOOP_TIMEOUT_MS = 20_000
         private const val UTTERANCE_NO_SPEECH_TIMEOUT_MS = 4200
@@ -5858,9 +5848,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val DEFAULT_POLICY_NO_UNVALIDATED_ENDPOINT_FALLBACK = false
         private const val DEFAULT_POLICY_FAIL_FAST_IF_NO_PROFILE_MATCH = false
         private const val MIN_TRANSCRIPT_ALNUM_CHARS = 2
-        private const val MIN_TRANSCRIPT_TOKEN_COUNT = 5
-        private const val MIN_TRANSCRIPT_UNIQUE_RATIO = 0.45
-        private const val TRANSCRIPT_ECHO_OVERLAP_THRESHOLD = 0.68
         private const val MIN_ADAPTIVE_ASR_ATTEMPTS_BEFORE_EARLY_EXIT = 2
         private const val ENABLE_GATEWAY_TURN_STREAM = false
         private const val ENABLE_GATEWAY_STREAM_LIVE_PLAYBACK = false

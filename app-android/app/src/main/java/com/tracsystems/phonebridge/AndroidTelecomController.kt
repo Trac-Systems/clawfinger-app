@@ -1,18 +1,32 @@
 package com.tracsystems.phonebridge
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
 import android.telecom.Call
 import android.telecom.TelecomManager
+import android.telecom.VideoProfile
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 class AndroidTelecomController : TelecomController {
+    @SuppressLint("MissingPermission")
     override fun dial(context: Context, number: String): Result<Unit> = runCatching {
         prewarmRootBridge("dial")
+        if (!hasPermission(context, Manifest.permission.CALL_PHONE)) {
+            error("CALL_PHONE permission missing")
+        }
         val telecomManager = context.getSystemService(TelecomManager::class.java)
             ?: error("Telecom service unavailable")
-        if (telecomManager.isInCall || InCallStateHolder.hasLiveCall() || InCallStateHolder.hasAnyTrackedCall()) {
+        val systemInCall = if (hasPermission(context, Manifest.permission.READ_PHONE_STATE)) {
+            telecomManager.isInCall
+        } else {
+            false
+        }
+        if (systemInCall || InCallStateHolder.hasLiveCall() || InCallStateHolder.hasAnyTrackedCall()) {
             error("Call already in progress")
         }
         telecomManager.placeCall(Uri.fromParts("tel", number, null), null)
@@ -20,7 +34,7 @@ class AndroidTelecomController : TelecomController {
     }
 
     override fun answer(context: Context): Result<Unit> = runCatching {
-        InCallStateHolder.currentCall?.answer(Call.STATE_ACTIVE)
+        InCallStateHolder.currentCall?.answer(VideoProfile.STATE_AUDIO_ONLY)
             ?: error("No active incoming call available to answer")
         Log.i(TAG, "Answer command executed")
     }
@@ -79,6 +93,10 @@ class AndroidTelecomController : TelecomController {
                 CommandAuditLog.add("root:prewarm:$trigger:err")
             }
         }, "pb-prewarm-$trigger").start()
+    }
+
+    private fun hasPermission(context: Context, permission: String): Boolean {
+        return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     }
 
     private companion object {
