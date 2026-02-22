@@ -460,11 +460,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     if (utterance == null) {
                         lastRejectionReason = "utterance_empty"
                         consecutiveNoAudioRejects = 0
+                        // Keep stream alive on empty retry — avoid stop/reopen cycle
                         if (!strictStreamOnly) {
-                            stopRootCaptureStreamSession("state_machine_empty_retry")
                             Log.w(TAG, "state-machine utterance empty; scheduling stream retry (strictStream=$strictStreamOnly)")
                         } else {
-                            stopRootCaptureStreamSession("state_machine_empty_retry_strict")
                             maybeRecoverRootRoute(
                                 force = false,
                                 reason = "state_machine_empty_retry_strict",
