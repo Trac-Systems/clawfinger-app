@@ -4826,7 +4826,27 @@ _Last updated: 2026-02-19_
 - Kept: no stream-stop on empty retry + faster retry delay (120ms).
 - Commit: `189dbad`.
 
+### Live test result (route reapply approach) — PASS
+- Dialed `+4915129135779`.
+- 4 successful turns, all transcripts accurate:
+  1. "Can you please recommend me a good movie?"
+  2. "Please recommend a good book."
+  3. "Can you please recommend me a good science documentation?"
+  4. "What do you know about black holes?"
+- Route reapply after each tinyplay restored d20 capture for turn-2+.
+- Debug WAVs pulled to `debug-wavs/latest-call-20260222-012000/`.
+
+### Stability hardening: persistent playback + telephony listener
+- Enabled `persistent_session: true` in profile (`fc863ae`).
+  - tinyplay stays open on d29 between turns by injecting silence.
+  - Prevents DAPM teardown entirely — eliminates root cause of route disruption.
+  - Post-playback route reapply remains as safety net.
+- Added `TelephonyCallback.DataConnectionStateListener` (`25433d0`).
+  - Registered during call service lifetime.
+  - On data connection state change (VoLTE↔VoWiFi handoff), triggers `maybeRecoverRootRoute(force=true)`.
+  - Proactive recovery instead of reactive no-audio-streak detection.
+
 ### Next
-1. Deploy and re-test live call.
-2. Verify `root route set applied` appears in logs after each tinyplay.
-3. Verify turn-2+ captures audio and produces transcripts.
+1. Deploy persistent session + telephony listener build.
+2. Live call validation with persistent session enabled.
+3. Verify no regression from persistent tinyplay session.
