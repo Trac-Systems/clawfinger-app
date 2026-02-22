@@ -5,8 +5,11 @@ import android.telecom.CallAudioState
 import android.telecom.InCallService
 import android.telecom.VideoProfile
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 object InCallStateHolder {
     @Volatile
@@ -344,29 +347,63 @@ class BridgeInCallService : InCallService() {
         }, "pb-route-reapply-burst").start()
     }
 
+    private fun fetchGatewayCallConfig(): JSONObject? {
+        val profileFile = resolveProfileFile() ?: return null
+        val root = runCatching { JSONObject(profileFile.readText()) }.getOrNull() ?: return null
+        val gateway = root.optJSONObject("gateway") ?: return null
+        val baseUrl = gateway.optString("base_url").ifBlank { return null }
+        val bearer = gateway.optString("bearer").ifBlank { "" }
+
+        return runCatching {
+            val url = URL("$baseUrl/api/config/call")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 5_000
+                readTimeout = 5_000
+                if (bearer.isNotBlank()) {
+                    setRequestProperty("Authorization", "Bearer $bearer")
+                }
+            }
+            val code = conn.responseCode
+            if (code in 200..299) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                JSONObject(body)
+            } else {
+                Log.w(TAG, "gateway call config fetch failed: $code")
+                null
+            }
+        }.onFailure { e ->
+            Log.w(TAG, "gateway call config fetch error", e)
+        }.getOrNull()
+    }
+
     private fun loadIncomingCallPolicy(): IncomingCallPolicy {
         val default = IncomingCallPolicy(
             autoAnswer = false, autoAnswerDelayMs = 500L,
-            allowAll = false, unknownAllowed = true,
+            allowAll = true, unknownAllowed = true,
             allowedNumbers = emptySet(), disallowedNumbers = emptySet(),
         )
-        val profileFile = resolveProfileFile() ?: return default
-        val root = runCatching { JSONObject(profileFile.readText()) }.getOrNull() ?: return default
-        val incoming = root.optJSONObject("incoming") ?: return default
 
-        val autoAnswer = incoming.optBoolean("auto_answer", false)
-        val autoAnswerDelayMs = incoming.optLong("auto_answer_delay_ms", 500L)
-        val unknownAllowed = incoming.optBoolean("unknown_allowed", true)
-        val allowedRaw = incoming.opt("allowed")
-        val disallowedRaw = incoming.opt("disallowed")
+        val gw = fetchGatewayCallConfig()
+        if (gw != null) {
+            val allowlist = parseJsonStringArray(gw.optJSONArray("caller_allowlist"))
+            val blocklist = parseJsonStringArray(gw.optJSONArray("caller_blocklist"))
+            return IncomingCallPolicy(
+                autoAnswer = gw.optBoolean("auto_answer", false),
+                autoAnswerDelayMs = gw.optLong("auto_answer_delay_ms", 500L),
+                allowAll = allowlist.isEmpty(),
+                unknownAllowed = gw.optBoolean("unknown_callers_allowed", true),
+                allowedNumbers = allowlist,
+                disallowedNumbers = blocklist,
+            )
+        }
 
-        val allowAll = allowedRaw is String && allowedRaw == "*"
-        val allowedNumbers = parseNumberList(if (allowAll) null else allowedRaw)
-        val disallowedNumbers = parseNumberList(disallowedRaw)
-
+        // Fallback: reject call when gateway is unreachable (safe default)
+        Log.w(TAG, "gateway unreachable — rejecting call (safe default)")
         return IncomingCallPolicy(
-            autoAnswer, autoAnswerDelayMs,
-            allowAll, unknownAllowed, allowedNumbers, disallowedNumbers,
+            autoAnswer = false, autoAnswerDelayMs = 0L,
+            allowAll = false, unknownAllowed = false,
+            allowedNumbers = emptySet(), disallowedNumbers = emptySet(),
         )
     }
 
@@ -376,6 +413,18 @@ class BridgeInCallService : InCallService() {
             maxDurationSec = 300, maxDurationMessage = defaultMsg,
             sessionLogEnabled = true, gatewayReportEnabled = false,
         )
+
+        val gw = fetchGatewayCallConfig()
+        if (gw != null) {
+            return CallSessionPolicy(
+                maxDurationSec = gw.optInt("max_duration_sec", 300),
+                maxDurationMessage = gw.optString("max_duration_message", defaultMsg).ifBlank { defaultMsg },
+                sessionLogEnabled = loadSessionLogFromProfile(),
+                gatewayReportEnabled = loadGatewayReportFromProfile(),
+            )
+        }
+
+        // Fallback to profile for session_log + gateway_report
         val profileFile = resolveProfileFile() ?: return default
         val root = runCatching { JSONObject(profileFile.readText()) }.getOrNull() ?: return default
         val session = root.optJSONObject("call_session") ?: return default
@@ -388,15 +437,28 @@ class BridgeInCallService : InCallService() {
         )
     }
 
-    private fun parseNumberList(raw: Any?): Set<String> {
-        if (raw == null || raw == JSONObject.NULL) return emptySet()
-        if (raw !is org.json.JSONArray) return emptySet()
-        val numbers = mutableSetOf<String>()
-        for (i in 0 until raw.length()) {
-            val num = raw.optString(i)?.trim()?.replace("[\\s\\-()]".toRegex(), "")
-            if (!num.isNullOrBlank()) numbers += num
+    private fun loadSessionLogFromProfile(): Boolean {
+        val profileFile = resolveProfileFile() ?: return true
+        val root = runCatching { JSONObject(profileFile.readText()) }.getOrNull() ?: return true
+        val session = root.optJSONObject("call_session") ?: return true
+        return session.optBoolean("session_log", true)
+    }
+
+    private fun loadGatewayReportFromProfile(): Boolean {
+        val profileFile = resolveProfileFile() ?: return false
+        val root = runCatching { JSONObject(profileFile.readText()) }.getOrNull() ?: return false
+        val session = root.optJSONObject("call_session") ?: return false
+        return session.optBoolean("gateway_report", false)
+    }
+
+    private fun parseJsonStringArray(arr: JSONArray?): Set<String> {
+        if (arr == null) return emptySet()
+        val result = mutableSetOf<String>()
+        for (i in 0 until arr.length()) {
+            val s = arr.optString(i)?.trim()?.replace("[\\s\\-()]".toRegex(), "")
+            if (!s.isNullOrBlank()) result += s
         }
-        return numbers
+        return result
     }
 
     private fun isNumberAllowed(policy: IncomingCallPolicy, callerNumber: String?): Boolean {

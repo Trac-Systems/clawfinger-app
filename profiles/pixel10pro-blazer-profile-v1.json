@@ -95,20 +95,7 @@
       "strict_stream_only": false
     }
   },
-  "greeting": {
-    "owner": "Markus",
-    "template": "Hallo, I am {owner}'s assistant. Always wait for the beep before talking. Thank you!"
-  },
-  "incoming": {
-    "auto_answer": true,
-    "auto_answer_delay_ms": 500,
-    "allowed": "*",
-    "disallowed": null,
-    "unknown_allowed": true
-  },
   "call_session": {
-    "max_duration_sec": 300,
-    "max_duration_message": "I'm sorry, but we have reached the maximum call duration. Goodbye!",
     "session_log": true,
     "gateway_report": false
   },

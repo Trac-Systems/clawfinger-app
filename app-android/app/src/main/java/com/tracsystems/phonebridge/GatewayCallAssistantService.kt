@@ -434,10 +434,55 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun fetchGatewayCallConfig(): JSONObject? {
+        return runCatching {
+            val url = URL("${runtimeGatewayBaseUrl}/api/config/call")
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 5_000
+                readTimeout = 5_000
+                if (runtimeGatewayBearer.isNotBlank()) {
+                    setRequestProperty("Authorization", "Bearer $runtimeGatewayBearer")
+                }
+            }
+            val code = conn.responseCode
+            if (code in 200..299) {
+                JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            } else {
+                Log.w(TAG, "gateway call config fetch failed: $code")
+                null
+            }
+        }.onFailure { e ->
+            Log.w(TAG, "gateway call config fetch error", e)
+        }.getOrNull()
+    }
+
+    private fun applyGatewayCallConfig() {
+        val cfg = fetchGatewayCallConfig() ?: return
+        val direction = runtimeCallDirection
+        val greetingKey = if (direction == "incoming") "greeting_incoming" else "greeting_outgoing"
+        val gwGreeting = cfg.optString(greetingKey, "").ifBlank { null }
+        if (gwGreeting != null) {
+            runtimeGreetingText = gwGreeting
+            Log.i(TAG, "greeting from gateway ($greetingKey): ${gwGreeting.take(80)}")
+        }
+        val gwMaxDur = cfg.optInt("max_duration_sec", 0)
+        if (gwMaxDur > 0) {
+            runtimeMaxDurationSec = gwMaxDur
+            Log.i(TAG, "max_duration_sec from gateway: $gwMaxDur")
+        }
+        val gwMaxDurMsg = cfg.optString("max_duration_message", "").ifBlank { null }
+        if (gwMaxDurMsg != null) {
+            runtimeMaxDurationMessage = gwMaxDurMsg
+        }
+        CommandAuditLog.add("voice_bridge:gateway_call_config:applied")
+    }
+
     private fun requestGreeting() {
         if (speaking.get()) return
         speaking.set(true)
         networkExecutor.execute {
+            applyGatewayCallConfig()
             val greetingText = runtimeGreetingText
             val response = runCatching {
                 callGatewayTurn(
@@ -4232,6 +4277,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (!forcedReply.isNullOrBlank()) {
                 writeFormField(out, boundary, "forced_reply", forcedReply)
             }
+            writeFormField(out, boundary, "caller_number", runtimeCallerNumber ?: "")
+            writeFormField(out, boundary, "call_direction", runtimeCallDirection)
             writeFileField(out, boundary, "audio", "turn.wav", "audio/wav", audioWav ?: buildSilenceWav())
             out.writeBytes("--$boundary--\r\n")
         }
@@ -4243,6 +4290,34 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         val json = JSONObject(body)
         sessionId = json.optString("session_id", sessionId.orEmpty()).ifBlank { sessionId }
+        val hangup = json.optBoolean("hangup", false)
+        val rejected = json.optBoolean("rejected", false)
+        if (rejected || hangup) {
+            val rejectReply = json.optString("reply", "")
+            val rejectAudio = json.optString("audio_base64").ifBlank {
+                json.optString("audio_wav_base64").ifBlank { null }
+            }
+            if (rejectAudio != null) {
+                runCatching {
+                    playReplyViaRootPcm(
+                        audioWavBase64 = rejectAudio,
+                        replyTextForEcho = rejectReply,
+                        enableBargeInInterrupt = false,
+                        appendReadyBeepTail = false,
+                    )
+                }
+            }
+            val reason = if (rejected) "rejected" else "hangup"
+            CommandAuditLog.add("voice_bridge:gateway_$reason:${json.optString("reason", "")}")
+            Log.i(TAG, "gateway $reason — disconnecting call")
+            InCallStateHolder.disconnectAllCalls()
+            return GatewayTurnResponse(
+                sessionId = sessionId,
+                transcript = json.optString("transcript", ""),
+                reply = rejectReply,
+                audioWavBase64 = rejectAudio,
+            )
+        }
         return GatewayTurnResponse(
             sessionId = sessionId,
             transcript = json.optString("transcript", ""),
@@ -4284,6 +4359,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (skipAsr) {
                 writeFormField(out, boundary, "skip_asr", "true")
             }
+            writeFormField(out, boundary, "caller_number", runtimeCallerNumber ?: "")
+            writeFormField(out, boundary, "call_direction", runtimeCallDirection)
             writeFileField(out, boundary, "audio", "turn.wav", "audio/wav", audioWav ?: buildSilenceWav())
             out.writeBytes("--$boundary--\r\n")
         }
