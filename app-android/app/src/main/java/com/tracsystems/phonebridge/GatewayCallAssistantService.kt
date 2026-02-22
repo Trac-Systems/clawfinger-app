@@ -400,6 +400,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 CommandAuditLog.add("voice_bridge:greeting_root:${reply.take(96)}")
                 speaking.set(false)
                 lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+                applyRootCallRouteProfile()
                 markPostPlaybackCaptureFlushPending("greeting_played")
                 startCaptureLoopWithReadyCue(
                     delayMs = POST_PLAYBACK_CAPTURE_DELAY_MS,
@@ -411,6 +412,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 CommandAuditLog.add("voice_bridge:greeting_barge_in")
                 speaking.set(false)
                 lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+                applyRootCallRouteProfile()
                 markPostPlaybackCaptureFlushPending("greeting_interrupted")
                 startCaptureLoopWithReadyCue(
                     delayMs = BARGE_IN_RESUME_DELAY_MS,
@@ -779,6 +781,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     markSpeechActivity("root_reply_played")
                     speaking.set(false)
                     lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+                    applyRootCallRouteProfile()
                     markPostPlaybackCaptureFlushPending("reply_played")
                     startCaptureLoopWithReadyCue(
                         delayMs = POST_PLAYBACK_CAPTURE_DELAY_MS,
@@ -792,6 +795,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     markSpeechActivity("root_reply_interrupted")
                     speaking.set(false)
                     lastPlaybackEndedAtMs.set(System.currentTimeMillis())
+                    applyRootCallRouteProfile()
                     markPostPlaybackCaptureFlushPending("reply_interrupted")
                     startCaptureLoopWithReadyCue(
                         delayMs = BARGE_IN_RESUME_DELAY_MS,
@@ -2529,8 +2533,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resetCaptureStreamBeforePlayback(reason: String) {
-        // Keep capture stream alive during playback — post-playback backlog flush
-        // will drain stale audio before turn-2 capture begins.
+        stopRootCaptureStreamSession("pre_playback:$reason")
         clearRootRollingPrebuffer()
         CommandAuditLog.add("voice_bridge:capture_reset_pre_playback:$reason")
     }
@@ -5692,8 +5695,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_CAPTURE_STREAM_DURATION_SEC = 900
         private const val ROOT_CAPTURE_STREAM_BITS_PER_SAMPLE = 16
         private const val ROOT_CAPTURE_STREAM_READ_TIMEOUT_MS = 320L
-        private const val ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_TIMEOUT_MS = 400L
-        private const val ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_MAX_BYTES = 524_288
+        private const val ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_TIMEOUT_MS = 180L
+        private const val ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_MAX_BYTES = 262_144
         private const val ROOT_CAPTURE_STREAM_RESTART_THRESHOLD = 2
         private const val ROOT_CAPTURE_SOURCE_ROTATE_THRESHOLD = 10
         private const val MIN_ROOT_STREAM_CHUNK_BYTES = 192
