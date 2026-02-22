@@ -4896,3 +4896,20 @@ User reported that playback quality degrades progressively over multiple turns â
 ### Next
 1. Call and verify playback quality stays consistent across 5+ turns.
 2. Check audit log for `persistent_keepalive_start` / `persistent_keepalive_stop` events.
+
+---
+
+## 2026-02-22 03:20 â€” spark2 ngrok basic auth removed for voice gateway
+
+### What changed
+- On `spark2` (`192.168.178.30`), removed `basic_auth` from `personaplex` tunnel in `~/ai/ngrok/spark2.yml`.
+- Restarted user service: `ngrok-spark2.service`.
+
+### Verification
+- `https://schmackofatz6.ngrok.dev/health` without headers returns `401` with `{"detail":"missing bearer token"}`.
+- With `Authorization: Bearer 41154c...ddf3`, `/health` returns `200` and gateway health JSON.
+- With `X-Voice-Bearer: 41154c...ddf3`, `/health` also returns `200`.
+
+### Outcome
+- Ngrok basic auth is no longer required.
+- Gateway is now protected only by bearer-token auth at the app layer.
