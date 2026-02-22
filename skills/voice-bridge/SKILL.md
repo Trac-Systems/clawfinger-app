@@ -57,10 +57,11 @@ The following were moved to the gateway's `config.json` and are fetched via `GET
 3. Restart app/service if needed and place a call.
 
 ## Operational prerequisites
-- Lock screen must be `None` or `Swipe`.
+- **No screen lock**: Lock screen MUST be `None` or `Swipe`. Never PIN, pattern, password, fingerprint, or face unlock — any secure lock blocks call audio access and root services when the screen turns off.
 - User 0 unlocked:
   - `adb shell dumpsys user | grep RUNNING_UNLOCKED`
 - Battery mode for app: `Unrestricted`.
+- No internet or Google account needed — all AI processing runs on the Mac over USB (ADB reverse).
 
 ## Gateway contract
 - Gateway connection is read from profile (`gateway.base_url`, `gateway.bearer`).
