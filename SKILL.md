@@ -7,6 +7,9 @@ description: Rooted Pixel telephony bridge for AI-assisted phone calls. Use this
 
 > **Platform**: macOS and Linux. Not compatible with Windows.
 
+> **Repo**: [Trac-Systems/clawfinger-app](https://github.com/Trac-Systems/clawfinger-app/)
+> **Companion repo**: [Trac-Systems/clawfinger-gateway](https://github.com/Trac-Systems/clawfinger-gateway/) — the voice gateway that runs on the host machine. Set up the gateway AFTER completing the phone setup below.
+
 Rooted Pixel telephony bridge for AI-assisted phone calls. The Android app captures/plays call audio via ALSA PCM on a rooted Pixel, connecting to an external voice gateway for ASR/LLM/TTS processing.
 
 ## 100% local — no internet, no cloud, no Google
@@ -79,6 +82,12 @@ Phone-side runtime: profile structure, endpoint discovery/tuning, capture/playba
 
 ## Setup order
 
-1. Install ADB/fastboot on the host (see "Host setup" above)
-2. Root the phone: `skills/root-pixel10pro/SKILL.md`
-3. Configure and tune endpoints: `skills/voice-bridge/SKILL.md`
+1. **Host setup**: Install ADB/fastboot on the host (see "Host setup" above)
+2. **Root the phone**: Follow the device-specific root skill:
+   - Pixel 7a: `skills/root-pixel7a/SKILL.md`
+   - Pixel 10 Pro: `skills/root-pixel10pro/SKILL.md`
+   - Other Pixel: copy the closest root skill, adjust device codename and build ID
+3. **Install the app**: Build and install the Clawfinger APK onto the rooted phone
+4. **Set up the gateway**: Clone and configure [clawfinger-gateway](https://github.com/Trac-Systems/clawfinger-gateway/) on the host — follow its SKILL.md for installation, model setup, and startup
+5. **Push a profile and connect**: Select or create a device profile, push it to the phone, set up ADB reverse port forwarding, and verify the gateway connection
+6. **Tune endpoints**: Follow `skills/voice-bridge/SKILL.md` for capture/playback endpoint discovery and training. If your device is not a Pixel 10 Pro or Pixel 7a, create a new blank profile (copy an existing one, change `profile_id`, empty out `route_profile`, `playback`, and `capture`) and run the full training loop.
