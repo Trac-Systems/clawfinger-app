@@ -4811,7 +4811,22 @@ _Last updated: 2026-02-19_
 - Since the stream stays alive now, there is no re-open overhead to justify the longer delay.
 - Commit: `054e09a`.
 
+### Live test result (stream-alive approach)
+- Dialed `+4915129135779`.
+- Turn 1 captured correctly: `Can you recommend me a good movie?` → reply played.
+- Turn 2: backlog flush drained 69KB, then state machine got EMPTY chunks for 4200ms → `utterance empty`.
+- Every retry also failed: new stream created (`sampleRate corrected`) but d20 returned no audio.
+- Pattern: **d20 stops producing audio after tinyplay runs on d29 for the reply**.
+
+### Root cause correction
+- Keeping the stream alive during tinyplay was wrong — the tinycap FIFO gets stuck/blocked when tinyplay runs on a related endpoint.
+- The real issue: **tinyplay disrupts the audio route (tinymix)**, and the route was only applied once at service start, never restored after playback.
+- Reverted stream-alive change, reverted flush limits.
+- Added `applyRootCallRouteProfile()` after every playback (greeting + reply, played + interrupted).
+- Kept: no stream-stop on empty retry + faster retry delay (120ms).
+- Commit: `189dbad`.
+
 ### Next
-1. Build debug APK and deploy.
-2. Live call validation: verify turn-2+ works without stalling.
-3. Check debug WAVs for any playback bleed into `rxm-*` files.
+1. Deploy and re-test live call.
+2. Verify `root route set applied` appears in logs after each tinyplay.
+3. Verify turn-2+ captures audio and produces transcripts.
