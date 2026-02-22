@@ -71,6 +71,9 @@ That's it for the host. Everything else (APatch, factory images, profile pushing
 ### [Root — Pixel 10 Pro](skills/root-pixel10pro/SKILL.md)
 APatch root setup, rootd daemon, su path bootstrap, recovery. Device-specific to Pixel 10 Pro (`blazer`).
 
+### [Root — Pixel 7a](skills/root-pixel7a/SKILL.md)
+APatch root setup, rootd daemon, su path bootstrap, recovery. Device-specific to Pixel 7a (`lynx`).
+
 ### [Voice Bridge](skills/voice-bridge/SKILL.md)
 Phone-side runtime: profile structure, endpoint discovery/tuning, capture/playback training loops, incoming call handling.
 
