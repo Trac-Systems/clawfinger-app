@@ -127,7 +127,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val lastSpeechActivityAtMs = AtomicLong(0L)
     private val lastPlaybackEndedAtMs = AtomicLong(0L)
     private val postPlaybackCaptureFlushPending = AtomicBoolean(false)
-    private val skipNextPostPlaybackBacklogFlush = AtomicBoolean(false)
+    // skipNextPostPlaybackBacklogFlush removed — stream stays alive during playback now
     private val lastReadyCueAtMs = AtomicLong(0L)
     private val captureLoopGeneration = AtomicLong(0L)
     private var readyBeepWavCache: ByteArray? = null
@@ -295,7 +295,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         turnVad = null
         startupRecoveryActive = false
         postPlaybackCaptureFlushPending.set(false)
-        skipNextPostPlaybackBacklogFlush.set(false)
+        // skipNextPostPlaybackBacklogFlush removed
         rootCaptureCalibratedForCall = false
         rootPlaybackCalibratedForCall = false
         restoreRootCallRouteProfile()
@@ -1034,16 +1034,10 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             if (!streamBacklogEvaluated) {
                 streamBacklogEvaluated = true
                 val pendingFlush = postPlaybackCaptureFlushPending.get()
-                val skipFlush = skipNextPostPlaybackBacklogFlush.getAndSet(false)
                 val sincePlaybackMs = nowMs - lastPlaybackEndedAtMs.get()
                 val withinPostPlaybackWindow = sincePlaybackMs in 0..POST_PLAYBACK_STREAM_BACKLOG_FLUSH_WINDOW_MS
                 if (pendingFlush || withinPostPlaybackWindow) {
                     clearRootRollingPrebuffer()
-                    if (skipFlush) {
-                        postPlaybackCaptureFlushPending.set(false)
-                        CommandAuditLog.add("voice_bridge:root_stream_backlog_flush_skip:post_playback_reset")
-                        continue
-                    }
                     val reason = if (pendingFlush) {
                         "pending_post_playback:${sincePlaybackMs}ms"
                     } else {
@@ -2536,10 +2530,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resetCaptureStreamBeforePlayback(reason: String) {
-        stopRootCaptureStreamSession("pre_playback:$reason")
+        // Keep capture stream alive during playback — post-playback backlog flush
+        // will drain stale audio before turn-2 capture begins.
         clearRootRollingPrebuffer()
-        postPlaybackCaptureFlushPending.set(false)
-        skipNextPostPlaybackBacklogFlush.set(true)
         CommandAuditLog.add("voice_bridge:capture_reset_pre_playback:$reason")
     }
 
