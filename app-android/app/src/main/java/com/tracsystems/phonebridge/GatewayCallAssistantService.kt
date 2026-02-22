@@ -22,6 +22,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyManager
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -127,7 +129,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private val lastSpeechActivityAtMs = AtomicLong(0L)
     private val lastPlaybackEndedAtMs = AtomicLong(0L)
     private val postPlaybackCaptureFlushPending = AtomicBoolean(false)
-    // skipNextPostPlaybackBacklogFlush removed — stream stays alive during playback now
+    private var telephonyCallback: TelephonyCallback? = null
     private val lastReadyCueAtMs = AtomicLong(0L)
     private val captureLoopGeneration = AtomicLong(0L)
     private var readyBeepWavCache: ByteArray? = null
@@ -262,6 +264,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             InCallStateHolder.setSpeakerRoute(FORCE_SPEAKER_ROUTE)
             enforceCallMute()
             markSpeechActivity("service_start")
+            registerTelephonyStateListener()
             startSilenceWatchdog()
             if (SEND_GREETING_ON_CONNECT) {
                 requestGreeting()
@@ -284,6 +287,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         tts?.shutdown()
         tts = null
         captureLoopGeneration.incrementAndGet()
+        unregisterTelephonyStateListener()
         mainHandler.removeCallbacks(silenceWatchdog)
         if (callMuteEnforced.compareAndSet(true, false)) {
             InCallStateHolder.setCallMuted(false)
@@ -5581,6 +5585,44 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 rootBootstrapInFlight.set(false)
             }
         }, "pb-root-bootstrap").start()
+    }
+
+    private fun registerTelephonyStateListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return
+        }
+        val tm = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager ?: return
+        val callback = object : TelephonyCallback(), TelephonyCallback.DataConnectionStateListener {
+            override fun onDataConnectionStateChanged(state: Int, networkType: Int) {
+                if (!serviceActive.get() || !InCallStateHolder.hasLiveCall()) {
+                    return
+                }
+                Log.i(TAG, "telephony data connection changed: state=$state networkType=$networkType")
+                CommandAuditLog.add("voice_bridge:telephony_data_change:state=$state:net=$networkType")
+                maybeRecoverRootRoute(
+                    force = true,
+                    reason = "telephony_data_change:$state:$networkType",
+                    noAudioStreak = 0,
+                )
+            }
+        }
+        runCatching {
+            tm.registerTelephonyCallback(mainHandler::post, callback)
+            telephonyCallback = callback
+            Log.i(TAG, "telephony state listener registered")
+        }.onFailure { error ->
+            Log.w(TAG, "failed to register telephony state listener", error)
+        }
+    }
+
+    private fun unregisterTelephonyStateListener() {
+        val callback = telephonyCallback ?: return
+        telephonyCallback = null
+        val tm = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager ?: return
+        runCatching {
+            tm.unregisterTelephonyCallback(callback)
+            Log.i(TAG, "telephony state listener unregistered")
+        }
     }
 
     private fun applyRootCallRouteProfile() {
