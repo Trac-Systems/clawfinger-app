@@ -22,6 +22,41 @@ This means:
 - Works in airplane mode with "calls only" enabled
 - All ASR/LLM/TTS processing stays on the host machine — nothing is sent to any cloud
 
+## Host setup (one-time)
+
+Install Android Platform Tools on the machine that will be connected to the phone via USB:
+
+**macOS:**
+```bash
+brew install --cask android-platform-tools
+```
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt install android-tools-adb android-tools-fastboot
+```
+
+**Linux (Arch):**
+```bash
+sudo pacman -S android-tools
+```
+
+Verify:
+```bash
+adb version
+fastboot --version
+```
+
+That's it for the host. Everything else (APatch, factory images, profile pushing, gateway) works over ADB from these two tools.
+
+### First-time phone connection
+
+1. On the phone: Settings → About phone → tap "Build number" 7 times to enable Developer Options
+2. Settings → Developer options → enable **USB debugging**
+3. Plug the phone into the host via USB
+4. Accept the "Allow USB debugging?" prompt on the phone (check "Always allow from this computer")
+5. Verify: `adb devices` should show the device as `device` (not `unauthorized`)
+
 ## Device requirements
 
 > **CRITICAL: No screen lock.** The phone's lock screen MUST be set to **None** or **Swipe**. Do NOT use PIN, pattern, password, fingerprint, or face unlock. Any secure lock screen will block the app from accessing call audio and root services when the screen turns off, and the entire system will stop working. This is not optional.
@@ -41,5 +76,6 @@ Phone-side runtime: profile structure, endpoint discovery/tuning, capture/playba
 
 ## Setup order
 
-1. Root the phone: `skills/root-pixel10pro/SKILL.md`
-2. Configure and tune endpoints: `skills/voice-bridge/SKILL.md`
+1. Install ADB/fastboot on the host (see "Host setup" above)
+2. Root the phone: `skills/root-pixel10pro/SKILL.md`
+3. Configure and tune endpoints: `skills/voice-bridge/SKILL.md`
