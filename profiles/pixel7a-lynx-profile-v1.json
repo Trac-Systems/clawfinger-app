@@ -1,0 +1,62 @@
+{
+  "profile_id": "pixel7a_lynx_v1",
+  "gateway": {
+    "base_url": "http://127.0.0.1:8996",
+    "bearer": "localdev"
+  },
+  "root_binaries": {
+    "su": "/data/adb/ap/bin/su",
+    "tinycap": "/data/adb/service.d/phonebridge-tinycap",
+    "tinyplay": "/data/adb/service.d/phonebridge-tinyplay",
+    "tinymix": "/data/adb/service.d/phonebridge-tinymix"
+  },
+  "route_profile": {
+    "set": [],
+    "restore": []
+  },
+  "playback": {
+    "candidate_order_in_app": [],
+    "tuning": {
+      "persistent_session": false,
+      "lock_device_for_call": true,
+      "prebuffer_ms": 220,
+      "period_size": 1024,
+      "period_count": 8,
+      "mmap": false
+    },
+    "endpoint_settings": {}
+  },
+  "capture": {
+    "candidate_order_in_app": [],
+    "endpoint_settings": {},
+    "tuning": {
+      "strict_stream_only": false
+    }
+  },
+  "call_session": {
+    "session_log": true,
+    "gateway_report": false
+  },
+  "beep": {
+    "mode": "embedded_tail",
+    "every_turn": true
+  },
+  "logging": {
+    "debug_wav_dump": {
+      "enabled": true,
+      "max_files": 180
+    },
+    "audit": {
+      "level": "verbose",
+      "transcripts_enabled": true,
+      "debug_wav_events_enabled": true
+    }
+  },
+  "policy": {
+    "no_unvalidated_endpoint_fallback": true,
+    "fail_fast_if_no_profile_match": false,
+    "route_recover_on_no_audio": true,
+    "route_recover_min_no_audio_streak": 2,
+    "route_recover_throttle_ms": 1200
+  }
+}
