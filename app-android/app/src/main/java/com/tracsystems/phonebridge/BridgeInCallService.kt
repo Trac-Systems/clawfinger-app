@@ -171,31 +171,64 @@ class BridgeInCallService : InCallService() {
         if (isIncoming) {
             handleIncomingCall(call)
         } else {
-            // Outgoing call — load session policy for max duration + logging
-            val sessionPolicy = loadCallSessionPolicy()
-            pendingCallMetadata = CallMetadata(
-                callerNumber = call.details?.handle?.schemeSpecificPart,
-                direction = "outgoing",
-                startedAtMs = System.currentTimeMillis(),
-                maxDurationSec = sessionPolicy.maxDurationSec,
-                maxDurationMessage = sessionPolicy.maxDurationMessage,
-                sessionLogEnabled = sessionPolicy.sessionLogEnabled,
-            )
+            // Outgoing call — fetch gateway config on background thread
+            val callerNumber = call.details?.handle?.schemeSpecificPart
+            Thread({
+                val gw = fetchGatewayCallConfig()
+                val sessionPolicy = loadCallSessionPolicy(gw)
+                pendingCallMetadata = CallMetadata(
+                    callerNumber = callerNumber,
+                    direction = "outgoing",
+                    startedAtMs = System.currentTimeMillis(),
+                    maxDurationSec = sessionPolicy.maxDurationSec,
+                    maxDurationMessage = sessionPolicy.maxDurationMessage,
+                    sessionLogEnabled = sessionPolicy.sessionLogEnabled,
+                )
+            }, "pb-outgoing-config").start()
             callback.onStateChanged(call, call.state)
         }
     }
 
     private fun handleIncomingCall(call: Call) {
         val callerNumber = call.details?.handle?.schemeSpecificPart
-        val policy = loadIncomingCallPolicy()
-
         CommandAuditLog.add("call:incoming:from:${callerNumber ?: "unknown"}")
-        Log.i(TAG, "incoming call from: $callerNumber, autoAnswer=${policy.autoAnswer}")
 
-        if (!policy.autoAnswer) {
-            CommandAuditLog.add("call:incoming:auto_answer_disabled")
-            // Let it ring normally — callback handles state transitions
-            val sessionPolicy = loadCallSessionPolicy()
+        // Prewarm root while we fetch config on a background thread
+        callback.onStateChanged(call, call.state)
+
+        Thread({
+            val gw = fetchGatewayCallConfig()
+            val policy = loadIncomingCallPolicy(gw)
+
+            Log.i(TAG, "incoming call from: $callerNumber, autoAnswer=${policy.autoAnswer}")
+
+            if (!policy.autoAnswer) {
+                CommandAuditLog.add("call:incoming:auto_answer_disabled")
+                val sessionPolicy = loadCallSessionPolicy(gw)
+                pendingCallMetadata = CallMetadata(
+                    callerNumber = callerNumber,
+                    direction = "incoming",
+                    startedAtMs = System.currentTimeMillis(),
+                    maxDurationSec = sessionPolicy.maxDurationSec,
+                    maxDurationMessage = sessionPolicy.maxDurationMessage,
+                    sessionLogEnabled = sessionPolicy.sessionLogEnabled,
+                )
+                return@Thread
+            }
+
+            if (!isNumberAllowed(policy, callerNumber)) {
+                CommandAuditLog.add("call:incoming:reject:not_allowed:${callerNumber ?: "unknown"}")
+                Log.i(TAG, "rejecting incoming call: number not allowed")
+                call.reject(false, null)
+                trackedCalls -= call
+                runCatching { call.unregisterCallback(callback) }
+                return@Thread
+            }
+
+            // Auto-answer after gateway-configured delay
+            CommandAuditLog.add("call:incoming:auto_answer:${callerNumber ?: "unknown"}")
+            Log.i(TAG, "auto-answering incoming call from $callerNumber (delay=${policy.autoAnswerDelayMs}ms)")
+            val sessionPolicy = loadCallSessionPolicy(gw)
             pendingCallMetadata = CallMetadata(
                 callerNumber = callerNumber,
                 direction = "incoming",
@@ -204,45 +237,15 @@ class BridgeInCallService : InCallService() {
                 maxDurationMessage = sessionPolicy.maxDurationMessage,
                 sessionLogEnabled = sessionPolicy.sessionLogEnabled,
             )
-            callback.onStateChanged(call, call.state)
-            return
-        }
 
-        if (!isNumberAllowed(policy, callerNumber)) {
-            CommandAuditLog.add("call:incoming:reject:not_allowed:${callerNumber ?: "unknown"}")
-            Log.i(TAG, "rejecting incoming call: number not allowed")
-            call.reject(false, null)
-            trackedCalls -= call
-            runCatching { call.unregisterCallback(callback) }
-            return
-        }
-
-        // Auto-answer after profile-configured delay
-        CommandAuditLog.add("call:incoming:auto_answer:${callerNumber ?: "unknown"}")
-        Log.i(TAG, "auto-answering incoming call from $callerNumber (delay=${policy.autoAnswerDelayMs}ms)")
-        val delayMs = policy.autoAnswerDelayMs
-        val sessionPolicy = loadCallSessionPolicy()
-        pendingCallMetadata = CallMetadata(
-            callerNumber = callerNumber,
-            direction = "incoming",
-            startedAtMs = System.currentTimeMillis(),
-            maxDurationSec = sessionPolicy.maxDurationSec,
-            maxDurationMessage = sessionPolicy.maxDurationMessage,
-            sessionLogEnabled = sessionPolicy.sessionLogEnabled,
-        )
-
-        Thread({
-            Thread.sleep(delayMs)
+            Thread.sleep(policy.autoAnswerDelayMs)
             runCatching {
                 call.answer(VideoProfile.STATE_AUDIO_ONLY)
             }.onFailure { e ->
                 Log.e(TAG, "auto-answer failed", e)
                 CommandAuditLog.add("call:incoming:auto_answer_error:${e.message}")
             }
-        }, "pb-auto-answer").start()
-
-        // Trigger state callback for RINGING to prewarm root
-        callback.onStateChanged(call, call.state)
+        }, "pb-incoming-config").start()
     }
 
     override fun onCallRemoved(call: Call) {
@@ -377,14 +380,7 @@ class BridgeInCallService : InCallService() {
         }.getOrNull()
     }
 
-    private fun loadIncomingCallPolicy(): IncomingCallPolicy {
-        val default = IncomingCallPolicy(
-            autoAnswer = false, autoAnswerDelayMs = 500L,
-            allowAll = true, unknownAllowed = true,
-            allowedNumbers = emptySet(), disallowedNumbers = emptySet(),
-        )
-
-        val gw = fetchGatewayCallConfig()
+    private fun loadIncomingCallPolicy(gw: JSONObject?): IncomingCallPolicy {
         if (gw != null) {
             val allowlist = parseJsonStringArray(gw.optJSONArray("caller_allowlist"))
             val blocklist = parseJsonStringArray(gw.optJSONArray("caller_blocklist"))
@@ -407,14 +403,13 @@ class BridgeInCallService : InCallService() {
         )
     }
 
-    private fun loadCallSessionPolicy(): CallSessionPolicy {
+    private fun loadCallSessionPolicy(gw: JSONObject? = null): CallSessionPolicy {
         val defaultMsg = "I'm sorry, but we have reached the maximum call duration. Goodbye!"
         val default = CallSessionPolicy(
             maxDurationSec = 300, maxDurationMessage = defaultMsg,
             sessionLogEnabled = true, gatewayReportEnabled = false,
         )
 
-        val gw = fetchGatewayCallConfig()
         if (gw != null) {
             return CallSessionPolicy(
                 maxDurationSec = gw.optInt("max_duration_sec", 300),
