@@ -491,12 +491,12 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     if (stateMachineRetryOnly) {
                         CommandAuditLog.add("voice_bridge:state_machine_empty_retry")
                         speaking.set(false)
-                        startCaptureLoop(NO_AUDIO_RETRY_DELAY_MS)
+                        startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
                         return@execute
                     }
                     if (strictStreamOnly) {
                         speaking.set(false)
-                        startCaptureLoop(NO_AUDIO_RETRY_DELAY_MS)
+                        startCaptureLoop(CAPTURE_RETRY_DELAY_MS)
                         return@execute
                     }
                     repeat(MAX_CAPTURE_ATTEMPTS_PER_TURN) { attempt ->
