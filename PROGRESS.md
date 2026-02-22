@@ -4846,7 +4846,20 @@ _Last updated: 2026-02-19_
   - On data connection state change (VoLTE↔VoWiFi handoff), triggers `maybeRecoverRootRoute(force=true)`.
   - Proactive recovery instead of reactive no-audio-streak detection.
 
+### Live test result (persistent session) — PASS but slow
+- 3 successful turns, all transcripts accurate.
+- Turn-2+ capture worked without route disruption.
+- BUT: inter-turn gaps were ~5s longer than previous call (15.5s vs 10.9s).
+- Root cause: post-playback `applyRootCallRouteProfile()` was running 10 tinymix commands
+  through rootd on every turn, adding ~2-5s blocking latency. Unnecessary with persistent session
+  since DAPM doesn't tear down.
+
+### Fix: conditional route reapply
+- Post-playback route reapply now only runs when `runtimeRootPlaybackPersistentSession == false`.
+- With persistent session active, the route stays intact and no reapply is needed.
+- Non-persistent mode still gets the reapply (safety for devices without persistent session support).
+- Telephony state listener + `maybeRecoverRootRoute` remain as safety nets for external events.
+- Commit: `03589e0`.
+
 ### Next
-1. Deploy persistent session + telephony listener build.
-2. Live call validation with persistent session enabled.
-3. Verify no regression from persistent tinyplay session.
+1. Deploy and re-test: verify inter-turn latency is back to normal.
