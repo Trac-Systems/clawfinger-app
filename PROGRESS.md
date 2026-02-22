@@ -4863,3 +4863,36 @@ _Last updated: 2026-02-19_
 
 ### Next
 1. Deploy and re-test: verify inter-turn latency is back to normal.
+
+---
+
+## 2026-02-22 — Fix progressive metallic playback degradation with persistent session keep-alive
+
+### What
+Added a silence keep-alive mechanism for the persistent playback FIFO to prevent ALSA underruns between turns.
+
+### Why
+User reported that playback quality degrades progressively over multiple turns — becoming "metallic" and unbearable after 4-5 turns. Root cause analysis:
+
+1. With persistent playback session, tinyplay stays alive between turns, reading from the FIFO.
+2. Between turns (user speaking → ASR → LLM → TTS), the FIFO has no data writer.
+3. The ALSA buffer (8192 frames at 48kHz ≈ 170ms) drains completely, causing an **XRUN (underrun)**.
+4. When the next turn's audio arrives, tinyalsa's `pcm_write()` must call `pcm_prepare()` to recover from the XRUN state.
+5. Each underrun+recovery cycle accumulates artifacts in the Tensor G6 audio DSP, manifesting as progressive metallic distortion.
+
+### Changes
+- **New fields**: `persistentPlaybackKeepAliveActive` (AtomicBoolean) + `persistentPlaybackKeepAliveThread`.
+- **`startPersistentPlaybackKeepAlive(session)`**: After each successful playback monitor, starts a daemon thread that writes frame-aligned silence chunks (≤4096 bytes, within PIPE_BUF for atomic writes) to the FIFO at real-time rate. This keeps the ALSA stream continuously fed and prevents underruns.
+- **`stopPersistentPlaybackKeepAlive()`**: Called before writing next turn's PCM data (ensures no concurrent writes) and during session teardown. Uses flag + interrupt + join(500ms) for clean shutdown.
+- **Integration points**:
+  - `playReplyViaRootPersistentSession()`: stops keep-alive at entry, starts it after successful playback.
+  - `stopRootPersistentPlaybackSession()`: stops keep-alive before closing session.
+
+### Result
+- Build: PASS
+- Deployed to device
+- Awaiting live test
+
+### Next
+1. Call and verify playback quality stays consistent across 5+ turns.
+2. Check audit log for `persistent_keepalive_start` / `persistent_keepalive_stop` events.

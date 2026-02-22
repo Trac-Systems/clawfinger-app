@@ -110,6 +110,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var adaptiveCaptureRateLowScoreStreak: Int = 0
     private var rootCaptureStreamSession: RootCaptureStreamSession? = null
     private var rootPersistentPlaybackSession: RootStreamPlaybackSession? = null
+    private val persistentPlaybackKeepAliveActive = AtomicBoolean(false)
+    @Volatile private var persistentPlaybackKeepAliveThread: Thread? = null
     private var rootPlaybackProfileLockedForCall: Boolean = false
     private var consecutiveNoAudioRejects: Int = 0
     private var enrolledSpeaker: SpeakerFingerprint? = null
@@ -2334,6 +2336,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun stopRootPersistentPlaybackSession(reason: String? = null, clearPlaybackShift: Boolean = false) {
+        stopPersistentPlaybackKeepAlive()
         val current = rootPersistentPlaybackSession ?: return
         rootPersistentPlaybackSession = null
         closeRootPlaybackStreamSession(
@@ -2341,6 +2344,47 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             reason = reason,
             clearPlaybackShift = clearPlaybackShift,
         )
+    }
+
+    private fun startPersistentPlaybackKeepAlive(session: RootStreamPlaybackSession) {
+        stopPersistentPlaybackKeepAlive()
+        val bytesPerFrame = session.channels.coerceAtLeast(1) * (session.bitsPerSample / 8)
+        val framesPerChunk = (session.sampleRate / 50).coerceAtLeast(64)
+        val chunkBytes = (framesPerChunk * bytesPerFrame).coerceAtMost(4096)
+        val silenceChunk = ByteArray(chunkBytes)
+        val sleepMs = ((framesPerChunk * 1000L) / session.sampleRate.coerceAtLeast(1)).coerceIn(5, 50)
+        persistentPlaybackKeepAliveActive.set(true)
+        val stream = session.outputStream
+        val thread = Thread {
+            while (persistentPlaybackKeepAliveActive.get()) {
+                val ok = runCatching { stream.write(silenceChunk) }.isSuccess
+                if (!ok) break
+                try {
+                    Thread.sleep(sleepMs)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "pb-playback-keepalive"
+        thread.start()
+        persistentPlaybackKeepAliveThread = thread
+        CommandAuditLog.add("voice_bridge:persistent_keepalive_start")
+    }
+
+    private fun stopPersistentPlaybackKeepAlive() {
+        if (!persistentPlaybackKeepAliveActive.compareAndSet(true, false)) return
+        val t = persistentPlaybackKeepAliveThread
+        persistentPlaybackKeepAliveThread = null
+        if (t != null) {
+            t.interrupt()
+            runCatching { t.join(500) }
+            if (t.isAlive) {
+                Log.w(TAG, "persistent playback keepalive thread did not stop in time")
+            }
+        }
+        CommandAuditLog.add("voice_bridge:persistent_keepalive_stop")
     }
 
     private fun persistDebugWav(
@@ -2551,6 +2595,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         replyTextForEcho: String?,
         enableBargeInInterrupt: Boolean,
     ): RootPlaybackResult {
+        stopPersistentPlaybackKeepAlive()
         if (pcm.isEmpty()) {
             return RootPlaybackResult(played = false, interrupted = false)
         }
@@ -2592,6 +2637,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 enableBargeInInterrupt = enableBargeInInterrupt,
             )
             if (monitorResult.played || monitorResult.interrupted) {
+                if (monitorResult.played) {
+                    startPersistentPlaybackKeepAlive(session)
+                }
                 return monitorResult
             }
             stopRootPersistentPlaybackSession("persistent_watchdog_d$device")
