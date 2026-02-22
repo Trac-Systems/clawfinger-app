@@ -1,17 +1,17 @@
 ---
 name: clawfinger
-description: Rooted Pixel telephony bridge for AI-assisted phone calls. Use this skill when working with the Clawfinger phone app, its sub-skills (root setup, voice bridge), or phone-side call handling. macOS/Linux only.
+description: Rooted Pixel telephony bridge for AI-assisted phone calls. Use this skill when working with the Clawfinger phone app, its sub-skills (root setup, voice bridge), or phone-side call handling. Runs on macOS and Linux.
 ---
 
 # Clawfinger
 
-> **Platform**: macOS and Linux only. Not compatible with Windows. Primarily tested on macOS (Apple Silicon).
+> **Platform**: macOS and Linux. Not compatible with Windows.
 
 Rooted Pixel telephony bridge for AI-assisted phone calls. The Android app captures/plays call audio via ALSA PCM on a rooted Pixel, connecting to an external voice gateway for ASR/LLM/TTS processing.
 
 ## 100% local — no internet, no cloud, no Google
 
-The phone does **not** need internet, a Google account, Google Play Services, or any data connection for the AI assistant to work. The entire voice pipeline (speech recognition, language model, text-to-speech) runs on the Mac. The phone reaches the gateway over USB via ADB reverse port forwarding (`127.0.0.1:8996` on the phone maps to `127.0.0.1:8996` on the Mac). No data ever leaves the local machine.
+The phone does **not** need internet, a Google account, Google Play Services, or any data connection for the AI assistant to work. The entire voice pipeline (speech recognition, language model, text-to-speech) runs on the host machine. The phone reaches the gateway over USB via ADB reverse port forwarding (`127.0.0.1:8996` on the phone maps to `127.0.0.1:8996` on the host). No data ever leaves the local machine.
 
 The only thing that requires a cellular connection is the phone call itself (voice call over the carrier network). Everything else is localhost over USB.
 
@@ -20,7 +20,7 @@ This means:
 - No Wi-Fi needed on the phone
 - No Google account or sign-in required
 - Works in airplane mode with "calls only" enabled
-- All ASR/LLM/TTS processing stays on the Mac — nothing is sent to any cloud
+- All ASR/LLM/TTS processing stays on the host machine — nothing is sent to any cloud
 
 ## Device requirements
 
@@ -28,7 +28,7 @@ This means:
 
 - **Root**: APatch (or equivalent) with working `su` binary
 - **Battery mode**: Set the app to **Unrestricted** in battery settings
-- **USB debugging**: Enabled, with the Mac authorized
+- **USB debugging**: Enabled, with the host machine authorized
 - **User 0 unlocked**: Verify with `adb shell dumpsys user | grep RUNNING_UNLOCKED`
 
 ## Skills

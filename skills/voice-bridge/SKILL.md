@@ -1,6 +1,6 @@
 ---
 name: voice-bridge
-description: Phone-side voice bridge runtime for Clawfinger. Use this skill when configuring profiles, tuning ALSA capture/playback endpoints, training audio quality, handling incoming call policies, or troubleshooting phone-to-gateway audio issues. macOS/Linux only.
+description: Phone-side voice bridge runtime for Clawfinger. Use this skill when configuring profiles, tuning ALSA capture/playback endpoints, training audio quality, handling incoming call policies, or troubleshooting phone-to-gateway audio issues. Runs on macOS and Linux.
 ---
 
 # VOICE-BRIDGE-SKILL
@@ -61,7 +61,7 @@ The following were moved to the gateway's `config.json` and are fetched via `GET
 - User 0 unlocked:
   - `adb shell dumpsys user | grep RUNNING_UNLOCKED`
 - Battery mode for app: `Unrestricted`.
-- No internet or Google account needed — all AI processing runs on the Mac over USB (ADB reverse).
+- No internet or Google account needed — all AI processing runs on the host machine over USB (ADB reverse).
 
 ## Gateway contract
 - Gateway connection is read from profile (`gateway.base_url`, `gateway.bearer`).
