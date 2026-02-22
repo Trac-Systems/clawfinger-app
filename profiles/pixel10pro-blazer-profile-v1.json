@@ -1,8 +1,8 @@
 {
   "profile_id": "pixel10pro_blazer_v1",
   "gateway": {
-    "base_url": "https://schmackofatz6.ngrok.dev",
-    "bearer": "41154c137d0225c8a8d1abc6f659a39811e6a40fd3851bce40da2604ae37ddf3"
+    "base_url": "http://127.0.0.1:8996",
+    "bearer": "localdev"
   },
   "root_binaries": {
     "su": "/data/adb/ap/bin/su",
@@ -94,6 +94,23 @@
     "tuning": {
       "strict_stream_only": false
     }
+  },
+  "greeting": {
+    "owner": "Markus",
+    "template": "Hallo, I am {owner}'s assistant. Always wait for the beep before talking. Thank you!"
+  },
+  "incoming": {
+    "auto_answer": true,
+    "auto_answer_delay_ms": 500,
+    "allowed": "*",
+    "disallowed": null,
+    "unknown_allowed": true
+  },
+  "call_session": {
+    "max_duration_sec": 300,
+    "max_duration_message": "I'm sorry, but we have reached the maximum call duration. Goodbye!",
+    "session_log": true,
+    "gateway_report": false
   },
   "beep": {
     "mode": "embedded_tail",

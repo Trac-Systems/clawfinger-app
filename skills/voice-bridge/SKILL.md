@@ -4,7 +4,7 @@
 Runbook for rooted Pixel telephony audio bridge + external voice gateway (ASR/LLM/TTS), with profile-driven tuning only.
 
 ## Dependencies
-- Root setup: `phone/ROOT-PIXEL10PRO-SKILL.md`
+- Root setup: `skills/root-pixel10pro/SKILL.md`
 - App service: `phone/app-android/app/src/main/java/com/tracsystems/phonebridge/GatewayCallAssistantService.kt`
 
 ## Runtime architecture

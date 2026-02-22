@@ -85,6 +85,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeRootTinymixBin: String = ROOT_TINYMIX_BIN
     private var runtimeGatewayBaseUrl: String = ""
     private var runtimeGatewayBearer: String = ""
+    private var runtimeGreetingText: String? = null
     private var runtimeRootPlayPeriodSize: Int = ROOT_PLAY_PERIOD_SIZE
     private var runtimeRootPlayPeriodCount: Int = ROOT_PLAY_PERIOD_COUNT
     private var runtimeRootPlayUseMmap: Boolean = ROOT_PLAY_USE_MMAP
@@ -122,6 +123,22 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var turnVad: VadWebRTC? = null
     @Volatile
     private var lastAssistantReplyText: String = ""
+    @Volatile
+    private var runtimeCallerNumber: String? = null
+    @Volatile
+    private var runtimeCallDirection: String = "outgoing"
+    @Volatile
+    private var runtimeMaxDurationSec: Int = 0
+    @Volatile
+    private var runtimeMaxDurationMessage: String = DEFAULT_MAX_DURATION_MESSAGE
+    @Volatile
+    private var runtimeSessionLogEnabled: Boolean = false
+    @Volatile
+    private var runtimeCallStartedAtMs: Long = 0L
+    @Volatile
+    private var runtimeMaxDurationFired: Boolean = false
+    private var maxDurationRunnable: Runnable? = null
+    private var turnCount: Int = 0
     private var currentVoiceCallVolume: Int = -1
     private val lastRootRouteRecoverAtMs = AtomicLong(0L)
     private val fallbackPromptAtMs = AtomicLong(0L)
@@ -224,6 +241,16 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             Log.i(TAG, "service started")
             Log.i(TAG, "build marker: 20260222-postcap-beep-o")
             CommandAuditLog.add("voice_bridge:start")
+            runtimeCallerNumber = intent?.getStringExtra(EXTRA_CALLER_NUMBER)
+            runtimeCallDirection = intent?.getStringExtra(EXTRA_CALL_DIRECTION) ?: "outgoing"
+            runtimeMaxDurationSec = intent?.getIntExtra(EXTRA_MAX_DURATION_SEC, 0) ?: 0
+            runtimeMaxDurationMessage = intent?.getStringExtra(EXTRA_MAX_DURATION_MESSAGE) ?: DEFAULT_MAX_DURATION_MESSAGE
+            runtimeSessionLogEnabled = intent?.getBooleanExtra(EXTRA_SESSION_LOG, false) ?: false
+            runtimeCallStartedAtMs = System.currentTimeMillis()
+            runtimeMaxDurationFired = false
+            turnCount = 0
+            Log.i(TAG, "call metadata: caller=${runtimeCallerNumber}, direction=$runtimeCallDirection, maxDuration=${runtimeMaxDurationSec}s, sessionLog=$runtimeSessionLogEnabled")
+            CommandAuditLog.add("voice_bridge:call_meta:${runtimeCallDirection}:${runtimeCallerNumber ?: "unknown"}")
             loadRuntimePcmProfile()
             if (!runtimeProfileLoaded) {
                 Log.e(TAG, "service start aborted: runtime profile is unavailable")
@@ -276,6 +303,40 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             } else {
                 startCaptureLoop(40)
             }
+            if (runtimeMaxDurationSec > 0) {
+                val runnable = Runnable {
+                    if (serviceActive.get() && !runtimeMaxDurationFired) {
+                        runtimeMaxDurationFired = true
+                        Log.i(TAG, "max call duration reached (${runtimeMaxDurationSec}s)")
+                        CommandAuditLog.add("voice_bridge:max_duration:${runtimeMaxDurationSec}s")
+                        Thread({
+                            runCatching {
+                                val response = callGatewayTurn(
+                                    transcript = runtimeMaxDurationMessage,
+                                    audioWav = buildSilenceWav(),
+                                    resetSession = false,
+                                    forcedReply = runtimeMaxDurationMessage,
+                                )
+                                if (response.audioWavBase64 != null) {
+                                    playReplyViaRootPcm(
+                                        audioWavBase64 = response.audioWavBase64,
+                                        replyTextForEcho = runtimeMaxDurationMessage,
+                                        enableBargeInInterrupt = false,
+                                        appendReadyBeepTail = false,
+                                    )
+                                }
+                            }.onFailure { e ->
+                                Log.e(TAG, "max duration goodbye failed", e)
+                            }
+                            CommandAuditLog.add("voice_bridge:max_duration_hangup")
+                            InCallStateHolder.disconnectAllCalls()
+                        }, "pb-max-duration-goodbye").start()
+                    }
+                }
+                maxDurationRunnable = runnable
+                mainHandler.postDelayed(runnable, runtimeMaxDurationSec * 1000L)
+                Log.i(TAG, "max duration timer set: ${runtimeMaxDurationSec}s")
+            }
             Thread({
                 ensureRootPlaybackCalibrated(reason = "service_start_post_route", force = true)
                 CommandAuditLog.add("root:route_post_calibration:done")
@@ -286,6 +347,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         Log.i(TAG, "service onDestroy")
+        writeCallSessionLog()
         serviceActive.set(false)
         speaking.set(false)
         tts?.stop()
@@ -293,6 +355,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         tts = null
         captureLoopGeneration.incrementAndGet()
         unregisterTelephonyStateListener()
+        maxDurationRunnable?.let { mainHandler.removeCallbacks(it) }
+        maxDurationRunnable = null
         mainHandler.removeCallbacks(silenceWatchdog)
         if (callMuteEnforced.compareAndSet(true, false)) {
             InCallStateHolder.setCallMuted(false)
@@ -374,11 +438,13 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         if (speaking.get()) return
         speaking.set(true)
         networkExecutor.execute {
+            val greetingText = runtimeGreetingText
             val response = runCatching {
                 callGatewayTurn(
-                    transcript = "Output exactly this and nothing else: Hi, I am Markus' assistant. Wait for the beep before responding.",
+                    transcript = greetingText ?: "Output exactly this and nothing else: Hello, I am your assistant.",
                     audioWav = buildSilenceWav(),
                     resetSession = true,
+                    forcedReply = greetingText,
                 )
             }.onFailure { error ->
                 Log.e(TAG, "gateway greeting failed", error)
@@ -775,6 +841,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     startCaptureLoop(TRANSCRIPT_RETRY_DELAY_MS)
                     return@execute
                 }
+                turnCount++
                 val cleanReply = sanitizeReply(reply)
                 if (SUPPRESS_BACKEND_CLARIFY_REPLY && isBackendClarifyReply(cleanReply)) {
                     CommandAuditLog.add("voice_bridge:clarify_reply_suppressed")
@@ -4100,6 +4167,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         audioWav: ByteArray?,
         skipAsr: Boolean = false,
         resetSession: Boolean = false,
+        forcedReply: String? = null,
     ): GatewayTurnResponse {
         if (resetSession) {
             sessionId = null
@@ -4127,6 +4195,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             audioWav = audioWav,
             skipAsr = skipAsr,
             resetSession = resetSession,
+            forcedReply = forcedReply,
         )
     }
 
@@ -4135,6 +4204,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         audioWav: ByteArray?,
         skipAsr: Boolean = false,
         resetSession: Boolean = false,
+        forcedReply: String? = null,
     ): GatewayTurnResponse {
         val boundary = "----PhoneBridge${System.currentTimeMillis()}"
         val url = URL("${runtimeGatewayBaseUrl}/api/turn")
@@ -4158,6 +4228,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             }
             if (skipAsr) {
                 writeFormField(out, boundary, "skip_asr", "true")
+            }
+            if (!forcedReply.isNullOrBlank()) {
+                writeFormField(out, boundary, "forced_reply", forcedReply)
             }
             writeFileField(out, boundary, "audio", "turn.wav", "audio/wav", audioWav ?: buildSilenceWav())
             out.writeBytes("--$boundary--\r\n")
@@ -5179,6 +5252,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runtimeEnableRouteRecoverOnNoAudio = profile.policyRouteRecoverOnNoAudio
             runtimeRootRouteRecoverMinNoAudioStreak = profile.policyRouteRecoverMinNoAudioStreak
             runtimeRootRouteRecoverThrottleMs = profile.policyRouteRecoverThrottleMs
+            runtimeGreetingText = profile.greetingText
 
             val resolvedPlaybackCandidates = profile.playbackCandidates
             val resolvedCaptureCandidates = profile.captureCandidates
@@ -5460,6 +5534,11 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val beepTailGapMs = beepRoot?.optInt("tail_gap_ms", READY_BEEP_TAIL_GAP_MS)
             ?.takeIf { it >= 0 }
             ?: READY_BEEP_TAIL_GAP_MS
+        val greetingRoot = root.optJSONObject("greeting")
+        val greetingTemplate = greetingRoot?.optString("template")?.trim()?.takeIf { it.isNotBlank() }
+        val greetingOwner = greetingRoot?.optString("owner")?.trim().orEmpty()
+        val greetingText = greetingTemplate?.replace("{owner}", greetingOwner)
+
         val policyRoot = root.optJSONObject("policy")
         val policyNoUnvalidatedEndpointFallback = policyRoot?.optBoolean(
             "no_unvalidated_endpoint_fallback",
@@ -5533,6 +5612,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             readyBeepFrequencyHz = readyBeepFrequencyHz,
             readyBeepAmplitude = readyBeepAmplitude,
             beepTailGapMs = beepTailGapMs,
+            greetingText = greetingText,
         )
     }
 
@@ -5701,6 +5781,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val readyBeepFrequencyHz: Int,
         val readyBeepAmplitude: Double,
         val beepTailGapMs: Int,
+        val greetingText: String?,
     )
 
     private data class RootCaptureFrame(
@@ -5894,11 +5975,47 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun writeCallSessionLog() {
+        if (!runtimeSessionLogEnabled) return
+        if (runtimeCallStartedAtMs == 0L) return
+        runCatching {
+            val endedAt = System.currentTimeMillis()
+            val durationSec = (endedAt - runtimeCallStartedAtMs) / 1000
+            val outcome = when {
+                runtimeMaxDurationFired -> "max_duration"
+                else -> "normal"
+            }
+            val session = JSONObject().apply {
+                put("caller_number", runtimeCallerNumber ?: "unknown")
+                put("direction", runtimeCallDirection)
+                put("started_at", runtimeCallStartedAtMs)
+                put("ended_at", endedAt)
+                put("duration_sec", durationSec)
+                put("turns", turnCount)
+                put("outcome", outcome)
+            }
+            val dir = File(filesDir, "session_logs")
+            dir.mkdirs()
+            val file = File(dir, "session-${runtimeCallStartedAtMs}.json")
+            file.writeText(session.toString(2))
+            Log.i(TAG, "session log written: ${file.absolutePath}")
+            CommandAuditLog.add("voice_bridge:session_log:${file.name}")
+        }.onFailure { e ->
+            Log.e(TAG, "failed to write session log", e)
+        }
+    }
+
     companion object {
         private const val TAG = "GatewayCallAssistant"
         private const val ACTION_STOP = "com.tracsystems.phonebridge.action.STOP_VOICE"
         private const val ACTION_REAPPLY_ROUTE = "com.tracsystems.phonebridge.action.REAPPLY_ROUTE"
         private const val EXTRA_ROUTE_REAPPLY_REASON = "reason"
+        private const val EXTRA_CALLER_NUMBER = "caller_number"
+        private const val EXTRA_CALL_DIRECTION = "call_direction"
+        private const val EXTRA_MAX_DURATION_SEC = "max_duration_sec"
+        private const val EXTRA_MAX_DURATION_MESSAGE = "max_duration_message"
+        private const val EXTRA_SESSION_LOG = "session_log"
+        private const val DEFAULT_MAX_DURATION_MESSAGE = "I'm sorry, but we have reached the maximum call duration. Goodbye!"
         private const val NOTIFICATION_ID = 4501
         private const val SILENCE_HANGUP_MS = 90_000L
         private const val SILENCE_CHECK_INTERVAL_MS = 1_000L
@@ -6159,8 +6276,21 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             23 to 1.50,
         )
         private var ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES_DEFAULT
-        fun start(context: Context) {
-            val intent = Intent(context, GatewayCallAssistantService::class.java)
+        fun start(
+            context: Context,
+            callerNumber: String? = null,
+            direction: String? = null,
+            maxDurationSec: Int = 0,
+            maxDurationMessage: String? = null,
+            sessionLogEnabled: Boolean = false,
+        ) {
+            val intent = Intent(context, GatewayCallAssistantService::class.java).apply {
+                callerNumber?.let { putExtra(EXTRA_CALLER_NUMBER, it) }
+                direction?.let { putExtra(EXTRA_CALL_DIRECTION, it) }
+                if (maxDurationSec > 0) putExtra(EXTRA_MAX_DURATION_SEC, maxDurationSec)
+                maxDurationMessage?.let { putExtra(EXTRA_MAX_DURATION_MESSAGE, it) }
+                putExtra(EXTRA_SESSION_LOG, sessionLogEnabled)
+            }
             context.startService(intent)
         }
 

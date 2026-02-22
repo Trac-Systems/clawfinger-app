@@ -5,7 +5,7 @@ Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
 
 ## Scope boundary
 - This file is root-only.
-- Voice/call bridge runtime is documented separately in `phone/VOICE-BRIDGE-SKILL.md`.
+- Voice/call bridge runtime is documented separately in `skills/voice-bridge/SKILL.md`.
 
 ## Current known-good state (2026-02-19)
 - Root method: **APatch** (Magisk path was not reliable on this device/build).
