@@ -16,13 +16,14 @@ Runbook for rooted Pixel telephony audio bridge + external voice gateway (ASR/LL
 - RX path: in-call downlink PCM (`tinycap`) -> gateway ASR/turn -> TTS WAV.
 - TX path: TTS WAV -> in-call uplink PCM (`tinyplay`) -> remote caller.
 - Call flow is server-ASR authoritative (`/api/turn`); no app-side hardcoded intent logic.
+- **Call policy is gateway-managed**: incoming call filtering, greetings, max duration, and passphrase authentication are all configured on the gateway and fetched by the phone at each call start via `GET /api/config/call`. The phone profile no longer contains these settings.
 
 ## Profile source of truth
 - Local profile file: `phone/profiles/pixel10pro-blazer-profile-v1.json`
 - Device active profile path: `/sdcard/Android/data/com.tracsystems.phonebridge/files/profiles/profile.json`
 - No hardcoded per-endpoint tuning in app code.
 
-### Required profile sections
+### Required profile sections (device-specific only)
 - `root_binaries`
 - `gateway`
   - `base_url`
@@ -37,9 +38,17 @@ Runbook for rooted Pixel telephony audio bridge + external voice gateway (ASR/LL
 - `capture.endpoint_settings.<pcm_index>`
   - `request_sample_rate`, `request_channels`, `effective_sample_rate`
 - `capture.tuning.strict_stream_only`
+- `call_session`
+  - `session_log`, `gateway_report`
 - `beep`
 - `logging`
 - `policy`
+
+### Sections removed from profile (now gateway-managed)
+The following were moved to the gateway's `config.json` and are fetched via `GET /api/config/call`:
+- ~~`incoming`~~ (`auto_answer`, `auto_answer_delay_ms`, `allowed`, `disallowed`, `unknown_allowed`) → gateway: `call_auto_answer`, `caller_allowlist`, `caller_blocklist`, `unknown_callers_allowed`
+- ~~`greeting`~~ (`owner`, `template`) → gateway: `greeting_incoming`, `greeting_outgoing`, `greeting_owner`
+- ~~`call_session.max_duration_sec`~~, ~~`call_session.max_duration_message`~~ → gateway: `max_duration_sec`, `max_duration_message`
 
 ## Deploy profile
 1. Push: `./scripts/android-push-profile.sh profiles/pixel10pro-blazer-profile-v1.json`
@@ -57,9 +66,15 @@ Runbook for rooted Pixel telephony audio bridge + external voice gateway (ASR/LL
 - Gateway connection is read from profile (`gateway.base_url`, `gateway.bearer`).
 - Health:
   - `curl -H "Authorization: Bearer <token>" <base_url>/health`
+- Call policy:
+  - `GET /api/config/call` — fetched at call start by both `BridgeInCallService` (for caller filtering, auto-answer) and `GatewayCallAssistantService` (for greeting, max duration). Fetched on a **background thread** to avoid NetworkOnMainThread crashes.
 - Voice endpoints:
   - `POST /api/asr`
-  - `POST /api/turn`
+  - `POST /api/turn` — includes `caller_number` and `call_direction` form fields for server-side caller filtering and session tracking.
+- Turn response handling:
+  - `rejected: true` — caller blocked by gateway policy. App plays rejection audio and hangs up.
+  - `hangup: true` — gateway requests call termination (e.g., passphrase auth failed). App plays audio and hangs up.
+- Fallback: if gateway is unreachable during `GET /api/config/call`, the phone rejects the call (safe default).
 
 ## Endpoint training workflow
 Use this when modem/call session shifts to another PCM endpoint.
