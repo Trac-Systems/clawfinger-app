@@ -4913,3 +4913,30 @@ User reported that playback quality degrades progressively over multiple turns â
 ### Outcome
 - Ngrok basic auth is no longer required.
 - Gateway is now protected only by bearer-token auth at the app layer.
+
+---
+
+## 2026-02-22 15:35 â€” Spark gateway `/api/turn` supports `forced_reply` bypass
+
+### Change applied (deployed on spark2)
+- Updated live gateway file: `~/ai/services/spark-voice-gateway/app.py` on `192.168.178.30`.
+- `POST /api/turn` now accepts optional multipart field `forced_reply`.
+- When `forced_reply` is non-empty:
+  - ASR is skipped (audio payload is ignored).
+  - LLM is skipped.
+  - Reply text is exactly `forced_reply`.
+  - TTS runs normally and returns WAV payload.
+  - Session lifecycle still honors `session_id` and `reset_session`.
+- Added `audio_wav_base64` in forced path (kept `audio_base64` for compatibility).
+
+### Runtime verification
+- Restarted `spark-voice-gateway.service` after patch.
+- Verified forced path through ngrok:
+  - Request: invalid audio file (`/etc/hosts`) + non-empty `forced_reply`.
+  - Result: HTTP `200`, transcript empty, reply equals forced text, WAV base64 present.
+- Verified unchanged normal path:
+  - Same invalid audio without `forced_reply`.
+  - Result: HTTP `400` (`invalid audio payload`), confirming no behavior change when `forced_reply` absent.
+
+### Notes
+- First startup after restart was delayed because FastPitch/HiFiGAN assets were reloaded; service became healthy after model load completed.
