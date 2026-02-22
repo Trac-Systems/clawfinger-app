@@ -44,7 +44,7 @@
       19
     ],
     "tuning": {
-      "persistent_session": false,
+      "persistent_session": true,
       "lock_device_for_call": true,
       "prebuffer_ms": 220,
       "period_size": 1024,
