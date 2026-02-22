@@ -2323,6 +2323,12 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         clearPlaybackShift: Boolean = false,
     ) {
         runCatching { session.outputStream.close() }
+        session.relaySocket?.let { sock ->
+            runCatching { sock.close() }
+        }
+        session.relayPid?.let { rPid ->
+            stopRootPlaybackProcess(rPid)
+        }
         stopRootPlaybackProcess(session.pid)
         runCatching { session.fifoFile.delete() }
         reason?.takeIf { it.isNotBlank() }?.let {
@@ -2687,15 +2693,40 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             runCatching { fifoFile.delete() }
             return null
         }
-        val output = runCatching { FileOutputStream(fifoFile) }.getOrNull()
-        if (output == null) {
+        RootShellRuntime.run(
+            command = "pkill -f \"nc.*$PERSISTENT_PLAYBACK_RELAY_PORT\" 2>/dev/null; true",
+            timeoutMs = 1_500L,
+        )
+        val relayResult = RootShellRuntime.run(
+            command = "/system/bin/nc -l -s 127.0.0.1 -p $PERSISTENT_PLAYBACK_RELAY_PORT /system/bin/sh -c \"cat > ${fifoFile.absolutePath}\" >/dev/null 2>&1 &\necho \$!",
+            timeoutMs = 3_000L,
+        )
+        if (!relayResult.ok) {
+            Log.w(TAG, "root persistent nc relay failed device=$device: ${relayResult.error ?: relayResult.stderr.take(128)}")
             stopRootPlaybackProcess(pid)
             runCatching { fifoFile.delete() }
             return null
         }
+        val relayPid = Regex("(\\d+)").find(relayResult.stdout)?.groupValues?.get(1)?.toIntOrNull()
+        Thread.sleep(100)
+        val socket = runCatching {
+            java.net.Socket("127.0.0.1", PERSISTENT_PLAYBACK_RELAY_PORT).also {
+                it.tcpNoDelay = true
+            }
+        }.getOrNull()
+        if (socket == null) {
+            Log.w(TAG, "root persistent nc relay connect failed device=$device port=$PERSISTENT_PLAYBACK_RELAY_PORT")
+            relayPid?.let { stopRootPlaybackProcess(it) }
+            stopRootPlaybackProcess(pid)
+            runCatching { fifoFile.delete() }
+            return null
+        }
+        val output = socket.getOutputStream()
         val session = RootStreamPlaybackSession(
             fifoFile = fifoFile,
             outputStream = output,
+            relaySocket = socket,
+            relayPid = relayPid,
             device = device,
             sampleRate = sampleRate,
             channels = channels,
@@ -3857,7 +3888,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private data class RootStreamPlaybackSession(
         val fifoFile: File,
-        val outputStream: FileOutputStream,
+        val outputStream: java.io.OutputStream,
+        val relaySocket: java.net.Socket?,
+        val relayPid: Int?,
         val device: Int,
         val sampleRate: Int,
         val channels: Int,
@@ -4339,18 +4372,39 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 runCatching { fifoFile.delete() }
                 continue
             }
-            val output = runCatching { FileOutputStream(fifoFile) }.getOrNull()
-            if (output == null) {
+            RootShellRuntime.run(
+                command = "pkill -f \"nc.*$PERSISTENT_PLAYBACK_RELAY_PORT\" 2>/dev/null; true",
+                timeoutMs = 1_500L,
+            )
+            val relayRes = RootShellRuntime.run(
+                command = "/system/bin/nc -l -s 127.0.0.1 -p $PERSISTENT_PLAYBACK_RELAY_PORT /system/bin/sh -c \"cat > ${fifoFile.absolutePath}\" >/dev/null 2>&1 &\necho \$!",
+                timeoutMs = 3_000L,
+            )
+            if (!relayRes.ok) {
                 stopRootPlaybackProcess(pid)
                 runCatching { fifoFile.delete() }
                 continue
             }
+            val relayPid = Regex("(\\d+)").find(relayRes.stdout)?.groupValues?.get(1)?.toIntOrNull()
+            Thread.sleep(100)
+            val sock = runCatching {
+                java.net.Socket("127.0.0.1", PERSISTENT_PLAYBACK_RELAY_PORT).also { it.tcpNoDelay = true }
+            }.getOrNull()
+            if (sock == null) {
+                relayPid?.let { stopRootPlaybackProcess(it) }
+                stopRootPlaybackProcess(pid)
+                runCatching { fifoFile.delete() }
+                continue
+            }
+            val output = sock.getOutputStream()
 
             selectedRootPlaybackDevice = device
             logPlaybackShiftIfChanged(device, "stream_playback_session")
             return RootStreamPlaybackSession(
                 fifoFile = fifoFile,
                 outputStream = output,
+                relaySocket = sock,
+                relayPid = relayPid,
                 device = device,
                 sampleRate = header.sampleRate,
                 channels = header.channels,
@@ -5824,6 +5878,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_PLAYBACK_TIMEOUT_MARGIN_MS = 2_500L
         private const val ROOT_PLAYBACK_PERSISTENT_PREBUFFER_MS = 180
         private const val ENABLE_ROOT_PERSISTENT_PLAYBACK_SESSION = false
+        private const val PERSISTENT_PLAYBACK_RELAY_PORT = 48734
         private const val ENABLE_ROOT_PLAYBACK_DEVICE_LOCK_FOR_CALL = true
         private const val ROOT_PLAYBACK_RETRY_ON_TIMEOUT = false
         private const val ROOT_PLAYBACK_TIMEOUT_ASSUME_PLAYED = true
