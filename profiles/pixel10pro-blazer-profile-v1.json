@@ -1,7 +1,7 @@
 {
   "profile_id": "pixel10pro_blazer_v1",
   "gateway": {
-    "base_url": "http://192.168.178.30:8996",
+    "base_url": "https://schmackofatz6.ngrok.dev",
     "bearer": "41154c137d0225c8a8d1abc6f659a39811e6a40fd3851bce40da2604ae37ddf3"
   },
   "root_binaries": {
@@ -44,7 +44,7 @@
       19
     ],
     "tuning": {
-      "persistent_session": true,
+      "persistent_session": false,
       "lock_device_for_call": true,
       "prebuffer_ms": 220,
       "period_size": 1024,
@@ -98,10 +98,6 @@
   },
   "beep": {
     "mode": "embedded_tail",
-    "duration_ms": 360,
-    "frequency_hz": 760,
-    "amplitude": 0.42,
-    "tail_gap_ms": 1200,
     "every_turn": true
   },
   "logging": {
