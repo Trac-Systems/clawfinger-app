@@ -4793,3 +4793,9 @@ _Last updated: 2026-02-19_
 - Post-playback backlog flush (already exists) drains stale audio before turn-2 capture.
 - Removed `skipNextPostPlaybackBacklogFlush` field entirely (no longer needed — we always want the flush now).
 - Commit: `3d01138`.
+
+### Backlog flush limits increased
+- Since capture stream stays alive during playback (potentially 2-8s of audio), the backlog drain needs larger budget:
+  - `ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_TIMEOUT_MS`: `180` → `400`
+  - `ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_MAX_BYTES`: `262,144` → `524,288` (512KB)
+- Commit: `cb42aa7`.
