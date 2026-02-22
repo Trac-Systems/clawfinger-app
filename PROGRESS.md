@@ -4799,3 +4799,19 @@ _Last updated: 2026-02-19_
   - `ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_TIMEOUT_MS`: `180` → `400`
   - `ROOT_CAPTURE_STREAM_BACKLOG_FLUSH_MAX_BYTES`: `262,144` → `524,288` (512KB)
 - Commit: `cb42aa7`.
+
+### Stream stop on empty retry removed
+- Previously, when `captureUtteranceStateMachine()` returned null, the code called `stopRootCaptureStreamSession()` on every retry.
+- This forced a costly FIFO stop/reopen cycle on each attempt, compounding the turn-2 stall.
+- Now the stream stays alive for immediate retry.
+- Commit: `7409fe3`.
+
+### Empty retry delay reduced
+- Reduced state-machine empty retry delay from `450ms` (`NO_AUDIO_RETRY_DELAY_MS`) to `120ms` (`CAPTURE_RETRY_DELAY_MS`).
+- Since the stream stays alive now, there is no re-open overhead to justify the longer delay.
+- Commit: `054e09a`.
+
+### Next
+1. Build debug APK and deploy.
+2. Live call validation: verify turn-2+ works without stalling.
+3. Check debug WAVs for any playback bleed into `rxm-*` files.
