@@ -404,7 +404,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 CommandAuditLog.add("voice_bridge:greeting_root:${reply.take(96)}")
                 speaking.set(false)
                 lastPlaybackEndedAtMs.set(System.currentTimeMillis())
-                applyRootCallRouteProfile()
+                if (!runtimeRootPlaybackPersistentSession) applyRootCallRouteProfile()
                 markPostPlaybackCaptureFlushPending("greeting_played")
                 startCaptureLoopWithReadyCue(
                     delayMs = POST_PLAYBACK_CAPTURE_DELAY_MS,
@@ -416,7 +416,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 CommandAuditLog.add("voice_bridge:greeting_barge_in")
                 speaking.set(false)
                 lastPlaybackEndedAtMs.set(System.currentTimeMillis())
-                applyRootCallRouteProfile()
+                if (!runtimeRootPlaybackPersistentSession) applyRootCallRouteProfile()
                 markPostPlaybackCaptureFlushPending("greeting_interrupted")
                 startCaptureLoopWithReadyCue(
                     delayMs = BARGE_IN_RESUME_DELAY_MS,
@@ -785,7 +785,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     markSpeechActivity("root_reply_played")
                     speaking.set(false)
                     lastPlaybackEndedAtMs.set(System.currentTimeMillis())
-                    applyRootCallRouteProfile()
+                    if (!runtimeRootPlaybackPersistentSession) applyRootCallRouteProfile()
                     markPostPlaybackCaptureFlushPending("reply_played")
                     startCaptureLoopWithReadyCue(
                         delayMs = POST_PLAYBACK_CAPTURE_DELAY_MS,
@@ -799,7 +799,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     markSpeechActivity("root_reply_interrupted")
                     speaking.set(false)
                     lastPlaybackEndedAtMs.set(System.currentTimeMillis())
-                    applyRootCallRouteProfile()
+                    if (!runtimeRootPlaybackPersistentSession) applyRootCallRouteProfile()
                     markPostPlaybackCaptureFlushPending("reply_interrupted")
                     startCaptureLoopWithReadyCue(
                         delayMs = BARGE_IN_RESUME_DELAY_MS,
