@@ -1,3 +1,8 @@
+---
+name: voice-bridge
+description: Phone-side voice bridge runtime for Clawfinger. Use this skill when configuring profiles, tuning ALSA capture/playback endpoints, training audio quality, handling incoming call policies, or troubleshooting phone-to-gateway audio issues. macOS/Linux only.
+---
+
 # VOICE-BRIDGE-SKILL
 
 ## Purpose

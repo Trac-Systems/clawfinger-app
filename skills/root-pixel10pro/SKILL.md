@@ -1,3 +1,8 @@
+---
+name: root-pixel10pro
+description: APatch root setup and persistence for Pixel 10 Pro (blazer). Use this skill when rooting the device, troubleshooting root/su access, managing rootd, or recovering from boot issues. macOS/Linux only.
+---
+
 # ROOT-PIXEL10PRO-SKILL
 
 ## Purpose

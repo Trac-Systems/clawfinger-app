@@ -1,3 +1,8 @@
+---
+name: clawfinger
+description: Rooted Pixel telephony bridge for AI-assisted phone calls. Use this skill when working with the Clawfinger phone app, its sub-skills (root setup, voice bridge), or phone-side call handling. macOS/Linux only.
+---
+
 # Clawfinger
 
 > **Platform**: macOS and Linux only. Not compatible with Windows. Primarily tested on macOS (Apple Silicon).
