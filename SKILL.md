@@ -50,7 +50,7 @@ adb version
 fastboot --version
 ```
 
-That's it for the host. Everything else (APatch, factory images, profile pushing, gateway) works over ADB from these two tools.
+That's it for the host. Everything else (root setup, factory images, profile pushing, gateway) works over ADB from these two tools.
 
 ### First-time phone connection
 
@@ -64,7 +64,7 @@ That's it for the host. Everything else (APatch, factory images, profile pushing
 
 > **CRITICAL: No screen lock.** The phone's lock screen MUST be set to **None** or **Swipe**. Do NOT use PIN, pattern, password, fingerprint, or face unlock. Any secure lock screen will block the app from accessing call audio and root services when the screen turns off, and the entire system will stop working. This is not optional.
 
-- **Root**: APatch (or equivalent) with working `su` binary
+- **Root**: Magisk or APatch with working `su` binary
 - **Battery mode**: Set the app to **Unrestricted** in battery settings
 - **USB debugging**: Enabled, with the host machine authorized
 - **User 0 unlocked**: Verify with `adb shell dumpsys user | grep RUNNING_UNLOCKED`
@@ -72,7 +72,7 @@ That's it for the host. Everything else (APatch, factory images, profile pushing
 ## Skills
 
 ### [Root — Pixel 7a](skills/root-pixel7a/SKILL.md)
-APatch root setup, rootd daemon, su path bootstrap, recovery. Device-specific to Pixel 7a (`lynx`).
+Magisk-first root setup, rootd daemon, su path bootstrap, recovery. Device-specific to Pixel 7a (`lynx`).
 
 ### [Root — Pixel 10 Pro](skills/root-pixel10pro/SKILL.md)
 APatch root setup, rootd daemon, su path bootstrap, recovery. Device-specific to Pixel 10 Pro (`blazer`).
