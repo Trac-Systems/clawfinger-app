@@ -32,6 +32,10 @@ Canonical runbook for Pixel 7a (`lynx`) root setup and persistence.
 
 ## Non-negotiable runtime requirements
 - **No screen lock**: lock screen must be `None` or `Swipe`.
+- **App permissions**: After installing the Clawfinger APK, the human must grant these permissions on the device (Settings → Apps → Clawfinger → Permissions):
+  - **Microphone** (record audio)
+  - **Phone** (manage phone calls)
+  - **Notifications** (if prompted)
 - **Default dialer**: Clawfinger must be default dialer.
   ```bash
   adb shell '/data/adb/ap/bin/su -c "telecom set-default-dialer com.tracsystems.phonebridge"'

@@ -96,7 +96,7 @@
     }
   },
   "call_session": {
-    "session_log": true,
+    "session_log": false,
     "gateway_report": false
   },
   "beep": {
@@ -105,13 +105,13 @@
   },
   "logging": {
     "debug_wav_dump": {
-      "enabled": true,
+      "enabled": false,
       "max_files": 180
     },
     "audit": {
-      "level": "verbose",
-      "transcripts_enabled": true,
-      "debug_wav_events_enabled": true
+      "level": "off",
+      "transcripts_enabled": false,
+      "debug_wav_events_enabled": false
     }
   },
   "policy": {

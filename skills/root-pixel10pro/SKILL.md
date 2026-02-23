@@ -27,6 +27,10 @@ Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
 
 ## Non-negotiable runtime requirements
 - **No screen lock**: Lock screen MUST be `None` or `Swipe`. Never use PIN, pattern, password, fingerprint, or face unlock. Any secure lock will block root services and call audio access when the screen turns off, breaking the entire system.
+- **App permissions**: After installing the Clawfinger APK, the human must grant these permissions on the device (Settings → Apps → Clawfinger → Permissions):
+  - **Microphone** (record audio)
+  - **Phone** (manage phone calls)
+  - **Notifications** (if prompted)
 - Keep `Clawfinger` battery mode on **Unrestricted**.
 - Keep APatch `su` path file valid:
   - `/data/adb/ap/su_path` contains `/data/adb/ap/bin/su`.

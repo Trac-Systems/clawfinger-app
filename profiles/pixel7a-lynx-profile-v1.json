@@ -11,11 +11,37 @@
     "tinymix": "/data/adb/service.d/phonebridge-tinymix"
   },
   "route_profile": {
-    "set": [],
-    "restore": []
+    "set": [
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 148 IN_CALL_MUSIC",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 150 1",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 152 DL",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 153 DL",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 154 DL",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 155 DL",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 156 1",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 157 1",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 167 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 168 0"
+    ],
+    "restore": [
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 148 Builtin_MIC",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 150 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 152 Off",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 153 Off",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 154 Off",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 155 Off",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 156 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 157 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 167 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 168 0"
+    ]
   },
   "playback": {
-    "candidate_order_in_app": [],
+    "candidate_order_in_app": [
+      19,
+      18,
+      29
+    ],
     "tuning": {
       "persistent_session": false,
       "lock_device_for_call": true,
@@ -24,17 +50,53 @@
       "period_count": 8,
       "mmap": false
     },
-    "endpoint_settings": {}
+    "endpoint_settings": {
+      "29": {
+        "sample_rate": 48000,
+        "channels": 2,
+        "speed_compensation": 1.5
+      },
+      "23": {
+        "sample_rate": 48000,
+        "channels": 2
+      },
+      "18": {},
+      "19": {}
+    }
   },
   "capture": {
-    "candidate_order_in_app": [],
-    "endpoint_settings": {},
+    "candidate_order_in_app": [
+      20,
+      21
+    ],
+    "endpoint_settings": {
+      "20": {
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
+        "request_channels": 1
+      },
+      "21": {
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
+        "request_channels": 1
+      },
+      "22": {
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
+        "request_channels": 1
+      },
+      "54": {
+        "request_sample_rate": 48000,
+        "effective_sample_rate": 24000,
+        "request_channels": 1
+      }
+    },
     "tuning": {
       "strict_stream_only": false
     }
   },
   "call_session": {
-    "session_log": true,
+    "session_log": false,
     "gateway_report": false
   },
   "beep": {
@@ -43,13 +105,13 @@
   },
   "logging": {
     "debug_wav_dump": {
-      "enabled": true,
+      "enabled": false,
       "max_files": 180
     },
     "audit": {
-      "level": "verbose",
-      "transcripts_enabled": true,
-      "debug_wav_events_enabled": true
+      "level": "off",
+      "transcripts_enabled": false,
+      "debug_wav_events_enabled": false
     }
   },
   "policy": {
