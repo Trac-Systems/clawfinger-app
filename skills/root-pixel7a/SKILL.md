@@ -30,6 +30,14 @@ Canonical runbook for Pixel 7a (`lynx`) root setup and persistence.
   - `rootd/` (temporary rootd scripts)
   - delete both folders after deployment/verification.
 
+## OTA updates WILL break root
+
+> **WARNING**: Do NOT accept over-the-air (OTA) system updates on a rooted device. Any OTA update will overwrite the patched `init_boot` partition with a stock image, removing Magisk root entirely. The `su` binary, rootd daemon, and all root-dependent functionality (call audio capture, ALSA routing, default dialer override) will stop working immediately after the update reboots the device.
+>
+> If an OTA update has already been applied: re-root from scratch using this runbook with a factory image matching the **new** build ID. The old patched image will not work — you must patch the `init_boot.img` from the new build's factory package.
+>
+> To prevent accidental updates: Settings → System → Software updates → disable auto-download/auto-install. On a voice-only SIM with no data plan and no Wi-Fi, OTA updates cannot download, but the setting should still be disabled as a safeguard.
+
 ## Non-negotiable runtime requirements
 - **No screen lock**: lock screen must be `None` or `Swipe`.
 - **App permissions**: After installing the Clawfinger APK, the human must grant these permissions on the device (Settings → Apps → Clawfinger → Permissions):
