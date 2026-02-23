@@ -495,6 +495,13 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 Log.e(TAG, "gateway greeting failed", error)
                 CommandAuditLog.add("voice_bridge:error:${error.message}")
             }.getOrNull()
+            // Guard: abort if service/call died while waiting for gateway response
+            if (!serviceActive.get() || !InCallStateHolder.hasLiveCall()) {
+                Log.w(TAG, "greeting response arrived but service/call no longer active — discarding")
+                CommandAuditLog.add("voice_bridge:greeting_response_discarded:no_active_call")
+                speaking.set(false)
+                return@execute
+            }
             val reply = sanitizeReply(response?.reply?.trim().orEmpty())
             if (reply.isBlank()) {
                 speaking.set(false)
@@ -865,6 +872,13 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                     Log.e(TAG, "gateway text turn failed", error)
                     CommandAuditLog.add("voice_bridge:error:${error.message}")
                 }.getOrNull()
+                // Guard: abort if service/call died while waiting for gateway response
+                if (!serviceActive.get() || !InCallStateHolder.hasLiveCall()) {
+                    Log.w(TAG, "turn response arrived but service/call no longer active — discarding")
+                    CommandAuditLog.add("voice_bridge:turn_response_discarded:no_active_call")
+                    speaking.set(false)
+                    return@execute
+                }
                 response?.transcript?.takeIf { it.isNotBlank() }?.let { turnTranscript ->
                     Log.i(TAG, "gateway turn transcript (server): ${turnTranscript.take(140)}")
                     CommandAuditLog.add("voice_bridge:turn_asr:${turnTranscript.take(96)}")
@@ -6117,7 +6131,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val STARTUP_NO_AUDIO_UNPIN_THRESHOLD = 10
         private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 12
         private const val NO_AUDIO_UNPIN_THRESHOLD = 8
-        private const val ENFORCE_CALL_MUTE = false
+        private const val ENFORCE_CALL_MUTE = true
         private const val ENABLE_FOREGROUND_NOTIFICATION = true
         private const val SEND_GREETING_ON_CONNECT = true
         private const val ENABLE_LOCAL_TTS_FALLBACK = false
@@ -6195,7 +6209,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val ROOT_ROLLING_PREBUFFER_MS = 1_200
         private const val DEBUG_DUMP_ROOT_RAW_CAPTURE = false
         private const val MIN_DEBUG_RAW_WAV_BYTES = 8_192
-        private const val KEEP_CALL_MUTED_DURING_TTS = false
+        private const val KEEP_CALL_MUTED_DURING_TTS = true
         private const val FORCE_SPEAKER_ROUTE = false
         private const val MUTE_LOCAL_HANDSET_AUDIO = true
         private const val ROOT_SU_BIN = "/data/adb/ap/bin/su"

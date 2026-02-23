@@ -38,8 +38,8 @@
   },
   "playback": {
     "candidate_order_in_app": [
-      19,
       18,
+      19,
       29
     ],
     "tuning": {
