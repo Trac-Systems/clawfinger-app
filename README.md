@@ -8,13 +8,13 @@ This repository is focused on the Android app stack and profiles:
 - Android app: `app-android/`
 - Device profile(s): `profiles/`
 - Build/install/profile scripts: `scripts/`
-- Operational runbooks: `VOICE-BRIDGE-SKILL.md`, `ROOT-PIXEL10PRO-SKILL.md`
+- Operational runbooks: `skills/` directory
 
 ## Prerequisites
 
 - Android SDK / `adb`
 - Java 17
-- A rooted target device (current documented path: Pixel 10 Pro via APatch)
+- A rooted target device (documented: Pixel 7a and Pixel 10 Pro via APatch)
 - App set as default dialer on device
 
 ## Build
@@ -42,5 +42,5 @@ cd phone
 
 - Runtime behavior is profile-driven. Avoid hardcoding endpoint tuning in app code.
 - `profiles/` may contain sensitive values (for example gateway bearer tokens). Treat profiles as secrets in operational environments.
-- Root setup and recovery flow: `ROOT-PIXEL10PRO-SKILL.md`
-- Voice bridge tuning flow and endpoint training loop: `VOICE-BRIDGE-SKILL.md`
+- Root setup and recovery: [`skills/root-pixel10pro/SKILL.md`](skills/root-pixel10pro/SKILL.md), [`skills/root-pixel7a/SKILL.md`](skills/root-pixel7a/SKILL.md)
+- Voice bridge tuning and endpoint training: [`skills/voice-bridge/SKILL.md`](skills/voice-bridge/SKILL.md)
