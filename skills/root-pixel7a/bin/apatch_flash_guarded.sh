@@ -39,9 +39,13 @@ if [[ -n "$ADB_SERIAL" ]]; then
   ADB=(adb -s "$ADB_SERIAL")
 fi
 
+has_fastboot() {
+  fastboot devices | grep -q '[[:alnum:]]'
+}
+
 wait_fastboot() {
   for _ in $(seq 1 200); do
-    if fastboot devices | awk 'NF{exit 0} END{exit 1}'; then
+    if has_fastboot; then
       return 0
     fi
     sleep 0.5
@@ -57,7 +61,7 @@ recover_stock() {
       ${ADB[@]} reboot bootloader || true
       break
     fi
-    if fastboot devices | awk 'NF{exit 0} END{exit 1}'; then
+    if has_fastboot; then
       break
     fi
     sleep 1
@@ -72,8 +76,14 @@ recover_stock() {
 }
 
 echo "[guard] rebooting to bootloader"
-${ADB[@]} wait-for-device
-${ADB[@]} reboot bootloader || true
+if has_fastboot; then
+  echo "[guard] already in fastboot"
+else
+  st="$(${ADB[@]} get-state 2>/dev/null || true)"
+  if [[ "$st" == "device" ]]; then
+    ${ADB[@]} reboot bootloader || true
+  fi
+fi
 wait_fastboot || { echo "failed to reach fastboot" >&2; exit 1; }
 
 slot="$(fastboot getvar current-slot 2>&1 | sed -n 's/.*current-slot: //p' | tr -d '\r')"

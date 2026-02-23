@@ -4,24 +4,24 @@ set -euo pipefail
 usage() {
   cat <<USAGE
 Usage:
-  $0 --patched-img <path> --stock-boot <path> [--serial <adb_serial>] [--monitor-seconds <n>]
+  $0 --patched-img <path> --stock-init-boot <path> [--serial <adb_serial>] [--monitor-seconds <n>]
 
 Behavior:
-- Flashes patched boot to active slot.
+- Flashes patched init_boot to active slot.
 - Reboots and monitors ADB stability.
-- If instability is detected, auto-recovers by flashing stock boot to both slots.
+- If instability is detected, auto-recovers by flashing stock init_boot to both slots.
 USAGE
 }
 
 PATCHED_IMG=""
-STOCK_BOOT=""
+STOCK_INIT_BOOT=""
 ADB_SERIAL=""
 MONITOR_SECONDS=120
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --patched-img) PATCHED_IMG="${2:-}"; shift 2 ;;
-    --stock-boot) STOCK_BOOT="${2:-}"; shift 2 ;;
+    --stock-init-boot) STOCK_INIT_BOOT="${2:-}"; shift 2 ;;
     --serial) ADB_SERIAL="${2:-}"; shift 2 ;;
     --monitor-seconds) MONITOR_SECONDS="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -30,9 +30,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$PATCHED_IMG" ]] || { echo "--patched-img is required" >&2; exit 2; }
-[[ -n "$STOCK_BOOT" ]] || { echo "--stock-boot is required" >&2; exit 2; }
+[[ -n "$STOCK_INIT_BOOT" ]] || { echo "--stock-init-boot is required" >&2; exit 2; }
 [[ -f "$PATCHED_IMG" ]] || { echo "patched image not found: $PATCHED_IMG" >&2; exit 2; }
-[[ -f "$STOCK_BOOT" ]] || { echo "stock boot not found: $STOCK_BOOT" >&2; exit 2; }
+[[ -f "$STOCK_INIT_BOOT" ]] || { echo "stock init_boot not found: $STOCK_INIT_BOOT" >&2; exit 2; }
 
 ADB=(adb)
 if [[ -n "$ADB_SERIAL" ]]; then
@@ -54,7 +54,7 @@ wait_fastboot() {
 }
 
 recover_stock() {
-  echo "[guard] recovering stock boot on both slots"
+  echo "[guard] recovering stock init_boot on both slots"
   for _ in $(seq 1 120); do
     st="$(${ADB[@]} get-state 2>/dev/null || true)"
     if [[ "$st" == "device" ]]; then
@@ -68,11 +68,11 @@ recover_stock() {
   done
 
   wait_fastboot || { echo "[guard] failed to reach fastboot for recovery" >&2; return 1; }
-  fastboot flash boot_a "$STOCK_BOOT"
-  fastboot flash boot_b "$STOCK_BOOT"
+  fastboot flash init_boot_a "$STOCK_INIT_BOOT"
+  fastboot flash init_boot_b "$STOCK_INIT_BOOT"
   fastboot reboot
   ${ADB[@]} wait-for-device
-  echo "[guard] stock recovery complete"
+  echo "[guard] stock init_boot recovery complete"
 }
 
 echo "[guard] rebooting to bootloader"
@@ -90,7 +90,7 @@ slot="$(fastboot getvar current-slot 2>&1 | sed -n 's/.*current-slot: //p' | tr 
 [[ -n "$slot" ]] || { echo "unable to read current slot" >&2; exit 1; }
 echo "[guard] active slot: $slot"
 
-fastboot flash "boot_${slot}" "$PATCHED_IMG"
+fastboot flash "init_boot_${slot}" "$PATCHED_IMG"
 fastboot reboot
 
 echo "[guard] monitoring boot stability (${MONITOR_SECONDS}s)"
@@ -121,7 +121,7 @@ for _ in $(seq 1 "$loops"); do
 done
 
 if [[ $unstable -eq 0 && $seen_boot1 -ge 15 ]]; then
-  echo "[guard] patched boot looks stable"
+  echo "[guard] patched init_boot looks stable"
   exit 0
 fi
 
