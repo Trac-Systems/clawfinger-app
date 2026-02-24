@@ -56,8 +56,33 @@ Canonical runbook for Pixel 7a (`lynx`) root setup and persistence.
   ```
   **Symptom if not set**: Phone rings normally through Google Dialer, PhoneBridge `BridgeInCallService` is never bound, calls are not picked up or handled by the assistant.
 - Keep Clawfinger battery mode on **Unrestricted**.
+- **rootd must be running**: rootd does NOT auto-start after reboot. Must be manually started after every reboot.
 - Keep compatibility `su` path file valid:
   - `/data/adb/ap/su_path` must contain `/data/adb/ap/bin/su`.
+
+## Post-reboot recovery (REQUIRED after every reboot)
+
+After every reboot, three things break and must be fixed manually:
+
+1. **DIALER role resets** — Android resets `android.app.role.DIALER` to the stock dialer.
+2. **rootd is not running** — The rootd daemon does not auto-start. Without it, `RootShellRuntime` cannot execute any root commands (tinyplay, tinymix, tinycap all fail).
+3. **`/data/adb/` is inaccessible** — Magisk enforces `/data/adb/` as `drwx------` (700, root only). The app cannot directly access `/data/adb/ap/bin/su` or `/data/adb/service.d/phonebridge-tiny*`. Only rootd (running as root) or `/data/local/tmp/su` (symlink to `/debug_ramdisk/su`) can bootstrap root access.
+
+**Symptom if rootd is not running**: Logs show `root shell unavailable: no_root_shell:rootd:code=126:error=ConnectException...ECONNREFUSED | /data/adb/ap/bin/su:code=126:error=IOException...Permission denied`. No greeting is played, no audio capture, no tinymix routing — the call is completely silent.
+
+Fix all three after every reboot:
+```bash
+adb wait-for-device
+# 1) Re-set default dialer
+adb shell cmd role add-role-holder android.app.role.DIALER com.tracsystems.phonebridge 1
+# 2) Start rootd (must use /debug_ramdisk/su since /data/adb/ is inaccessible)
+adb shell '/debug_ramdisk/su -c "nohup /system/bin/sh /data/adb/service.d/phonebridge-rootd.sh > /dev/null 2>&1 &"'
+# 3) Verify
+adb shell '/debug_ramdisk/su -c "telecom get-default-dialer"'
+# Must output: com.tracsystems.phonebridge
+echo "CMD_B64:aWQ=" | adb shell "nc 127.0.0.1 48733"
+# Must output: uid=0(root) ... __PB_EXIT__:0
+```
 
 ## Root provisioning (Magisk) deterministic runbook
 

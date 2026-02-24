@@ -5,20 +5,41 @@
     "bearer": "localdev"
   },
   "root_binaries": {
-    "su": "/data/adb/ap/bin/su",
+    "su": "/data/local/tmp/su",
     "tinycap": "/data/adb/service.d/phonebridge-tinycap",
     "tinyplay": "/data/adb/service.d/phonebridge-tinyplay",
     "tinymix": "/data/adb/service.d/phonebridge-tinymix"
   },
   "route_profile": {
-    "set": [],
-    "restore": []
+    "set": [
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 148 IN_CALL_MUSIC",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 150 1",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 152 DL",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 153 DL",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 154 DL",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 155 DL",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 156 1",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 157 1",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 167 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 168 0"
+    ],
+    "restore": [
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 148 Builtin_MIC",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 150 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 152 Off",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 153 Off",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 154 Off",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 155 Off",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 156 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 157 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 167 0",
+      "/data/adb/service.d/phonebridge-tinymix -D 0 set 168 0"
+    ]
   },
   "playback": {
     "candidate_order_in_app": [
-      18,
       19,
-      29
+      18
     ],
     "tuning": {
       "persistent_session": false,

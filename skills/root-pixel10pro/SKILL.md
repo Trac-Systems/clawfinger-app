@@ -40,8 +40,33 @@ Canonical runbook for Pixel 10 Pro (`blazer`) root setup and persistence.
   - **Phone** (manage phone calls)
   - **Notifications** (if prompted)
 - Keep `Clawfinger` battery mode on **Unrestricted**.
+- **rootd must be running**: rootd does NOT auto-start after reboot. Must be manually started after every reboot.
 - Keep APatch `su` path file valid:
   - `/data/adb/ap/su_path` contains `/data/adb/ap/bin/su`.
+
+## Post-reboot recovery (REQUIRED after every reboot)
+
+After every reboot, three things break and must be fixed manually:
+
+1. **DIALER role resets** — Android resets `android.app.role.DIALER` to the stock dialer.
+2. **rootd is not running** — The rootd daemon does not auto-start. Without it, `RootShellRuntime` cannot execute any root commands (tinyplay, tinymix, tinycap all fail).
+3. **`/data/adb/` may be inaccessible** — The directory is typically `drwx------` (700, root only). The app cannot directly access `/data/adb/ap/bin/su`. Only rootd (running as root) or a symlink at `/data/local/tmp/su` can bootstrap root access.
+
+**Symptom if rootd is not running**: Logs show `root shell unavailable: no_root_shell:rootd:code=126:error=ConnectException...ECONNREFUSED`. No greeting, no audio capture, no tinymix routing — call is silent.
+
+Fix all three after every reboot:
+```bash
+adb wait-for-device
+# 1) Re-set default dialer
+adb shell cmd role add-role-holder android.app.role.DIALER com.tracsystems.phonebridge 1
+# 2) Start rootd (use direct su path since /data/adb/ may be inaccessible to shell)
+adb shell '/data/adb/ap/bin/su -c "nohup /system/bin/sh /data/adb/service.d/phonebridge-rootd.sh > /dev/null 2>&1 &"'
+# 3) Verify
+adb shell '/data/adb/ap/bin/su -c "telecom get-default-dialer"'
+# Must output: com.tracsystems.phonebridge
+echo "CMD_B64:aWQ=" | adb shell "nc 127.0.0.1 48733"
+# Must output: uid=0(root) ... __PB_EXIT__:0
+```
 
 ## Root provisioning (APatch) deterministic runbook
 
