@@ -6131,7 +6131,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val STARTUP_NO_AUDIO_UNPIN_THRESHOLD = 10
         private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 12
         private const val NO_AUDIO_UNPIN_THRESHOLD = 8
-        private const val ENFORCE_CALL_MUTE = true
+        private const val ENFORCE_CALL_MUTE = false
         private const val ENABLE_FOREGROUND_NOTIFICATION = true
         private const val SEND_GREETING_ON_CONNECT = true
         private const val ENABLE_LOCAL_TTS_FALLBACK = false
