@@ -2709,6 +2709,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } else {
             ROOT_PLAYBACK_DEVICE_CANDIDATES
         }
+        if (ENFORCE_CALL_MUTE) {
+            setCallMute(false, "root_playback_start")
+        }
         try {
             for (device in deviceOrder) {
                 if (!InCallStateHolder.hasLiveCall()) {
@@ -2809,7 +2812,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 )
             }
         } finally {
-            // no-op
+            if (ENFORCE_CALL_MUTE) {
+                setCallMute(true, "root_playback_end")
+            }
         }
         stopRootPersistentPlaybackSession(reason = "reply_playback_failed")
         rootPlaybackCalibratedForCall = false
@@ -6131,7 +6136,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val STARTUP_NO_AUDIO_UNPIN_THRESHOLD = 10
         private const val STARTUP_CAPTURE_SOURCE_ROTATE_THRESHOLD = 12
         private const val NO_AUDIO_UNPIN_THRESHOLD = 8
-        private const val ENFORCE_CALL_MUTE = false
+        private const val ENFORCE_CALL_MUTE = true
         private const val ENABLE_FOREGROUND_NOTIFICATION = true
         private const val SEND_GREETING_ON_CONNECT = true
         private const val ENABLE_LOCAL_TTS_FALLBACK = false
