@@ -44,12 +44,17 @@ Canonical runbook for Pixel 7a (`lynx`) root setup and persistence.
   - **Microphone** (record audio)
   - **Phone** (manage phone calls)
   - **Notifications** (if prompted)
-- **Default dialer**: Clawfinger must be default dialer.
+- **Default dialer**: Clawfinger must be default dialer. **This does NOT persist across reboots** — Android resets the DIALER role to the stock dialer on every reboot. Must be re-set after every reboot.
   ```bash
+  # Set via role manager (no root needed):
+  adb shell cmd role add-role-holder android.app.role.DIALER com.tracsystems.phonebridge 1
+  # Or via telecom (needs root):
   adb shell '/data/adb/ap/bin/su -c "telecom set-default-dialer com.tracsystems.phonebridge"'
+  # Verify:
   adb shell '/data/adb/ap/bin/su -c "telecom get-default-dialer"'
   # Must output: com.tracsystems.phonebridge
   ```
+  **Symptom if not set**: Phone rings normally through Google Dialer, PhoneBridge `BridgeInCallService` is never bound, calls are not picked up or handled by the assistant.
 - Keep Clawfinger battery mode on **Unrestricted**.
 - Keep compatibility `su` path file valid:
   - `/data/adb/ap/su_path` must contain `/data/adb/ap/bin/su`.
@@ -242,6 +247,8 @@ adb shell '/data/adb/ap/bin/su -c "test -x /data/adb/service.d/phonebridge-rootd
 adb shell '/data/adb/ap/bin/su -c "ps -A | grep -E \"phonebridge-rootd|[n]c -L -s 127.0.0.1 -p 48733\""'
 adb shell '/data/adb/ap/bin/su -c "test -x /data/adb/service.d/phonebridge-tinymix && echo tinymix_ok || echo tinymix_missing"'
 adb shell '/data/adb/ap/bin/su -c "/data/adb/service.d/phonebridge-tinymix -D 0 controls | head -1"'
+# Re-set default dialer (resets on every reboot):
+adb shell cmd role add-role-holder android.app.role.DIALER com.tracsystems.phonebridge 1
 adb shell '/data/adb/ap/bin/su -c "telecom get-default-dialer"'
 # Must output: com.tracsystems.phonebridge
 ```
