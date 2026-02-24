@@ -78,6 +78,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
     private var runtimeReadyBeepFrequencyHz: Int = READY_BEEP_FREQUENCY_HZ
     private var runtimeReadyBeepAmplitude: Double = READY_BEEP_AMPLITUDE
     private var runtimeReadyBeepTailGapMs: Int = READY_BEEP_TAIL_GAP_MS
+    private var runtimeCaptureGainDb: Double = DEFAULT_CAPTURE_GAIN_DB
     private var runtimeStrictStreamOnly: Boolean = ENABLE_STRICT_STREAM_ONLY
     private var runtimeRootSuPath: String = ROOT_SU_BIN
     private var runtimeRootTinycapBin: String = ROOT_TINYCAP_BIN
@@ -2709,9 +2710,6 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         } else {
             ROOT_PLAYBACK_DEVICE_CANDIDATES
         }
-        if (ENFORCE_CALL_MUTE) {
-            setCallMute(false, "root_playback_start")
-        }
         try {
             for (device in deviceOrder) {
                 if (!InCallStateHolder.hasLiveCall()) {
@@ -2812,9 +2810,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 )
             }
         } finally {
-            if (ENFORCE_CALL_MUTE) {
-                setCallMute(true, "root_playback_end")
-            }
+            // no-op: mic mute stays as-is during root playback — tinyplay uses a
+            // separate ALSA PCM path and toggling mute causes modem audio glitches
         }
         stopRootPersistentPlaybackSession(reason = "reply_playback_failed")
         rootPlaybackCalibratedForCall = false
@@ -4907,11 +4904,31 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
                 toSampleRate = session.effectiveSampleRate,
             )
         }
+        val gained = if (runtimeCaptureGainDb != 0.0) {
+            applyPcm16Gain(effective, runtimeCaptureGainDb)
+        } else {
+            effective
+        }
         return RootCaptureFrame(
-            pcm = effective,
+            pcm = gained,
             sampleRate = session.effectiveSampleRate,
             channels = 1,
         )
+    }
+
+    private fun applyPcm16Gain(pcm: ByteArray, gainDb: Double): ByteArray {
+        if (pcm.size < 2) return pcm
+        val multiplier = Math.pow(10.0, gainDb / 20.0)
+        val buffer = ByteBuffer.wrap(pcm.copyOf()).order(ByteOrder.LITTLE_ENDIAN)
+        val out = ByteBuffer.allocate(pcm.size).order(ByteOrder.LITTLE_ENDIAN)
+        while (buffer.remaining() >= 2) {
+            val sample = (buffer.short.toDouble() * multiplier)
+                .coerceIn(Short.MIN_VALUE.toDouble(), Short.MAX_VALUE.toDouble())
+                .toInt()
+                .toShort()
+            out.putShort(sample)
+        }
+        return out.array()
     }
 
     private fun readRootCaptureStreamBytes(
@@ -5365,6 +5382,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             ROOT_PLAYBACK_DEVICE_CHANNEL_OVERRIDES = profile.playbackChannelOverrides
             ROOT_PLAYBACK_DEVICE_SPEED_COMP_OVERRIDES = profile.playbackSpeedOverrides
             runtimeStrictStreamOnly = profile.captureStrictStreamOnly
+            runtimeCaptureGainDb = profile.captureGainDb
             runtimeDebugWavDumpEnabled = profile.debugWavDumpEnabled
             runtimeDebugWavMaxFiles = profile.debugWavMaxFiles
             runtimeAuditLevel = profile.auditLevel
@@ -5388,7 +5406,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             lastPlaybackShiftSignature = null
             rootPlaybackCalibratedForCall = false
             CommandAuditLog.add(
-                "voice_bridge:profile:loaded:${profile.profileId ?: "unnamed"}:pb=${ROOT_PLAYBACK_DEVICE_CANDIDATES.joinToString(",")}:cap=${ROOT_CAPTURE_CANDIDATES.joinToString(",") { it.device.toString() }}:strict_stream=$runtimeStrictStreamOnly",
+                "voice_bridge:profile:loaded:${profile.profileId ?: "unnamed"}:pb=${ROOT_PLAYBACK_DEVICE_CANDIDATES.joinToString(",")}:cap=${ROOT_CAPTURE_CANDIDATES.joinToString(",") { it.device.toString() }}:strict_stream=$runtimeStrictStreamOnly:capture_gain_db=$runtimeCaptureGainDb",
             )
             Log.i(
                 TAG,
@@ -5470,6 +5488,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         runtimeRootRouteRecoverMinNoAudioStreak = ROOT_ROUTE_RECOVER_MIN_NO_AUDIO_STREAK
         runtimeRootRouteRecoverThrottleMs = ROOT_ROUTE_RECOVER_THROTTLE_MS
         runtimeStrictStreamOnly = ENABLE_STRICT_STREAM_ONLY
+        runtimeCaptureGainDb = DEFAULT_CAPTURE_GAIN_DB
         runtimeDebugWavDumpEnabled = ENABLE_DEBUG_WAV_DUMP_DEFAULT
         runtimeDebugWavMaxFiles = MAX_DEBUG_WAV_FILES_DEFAULT
         runtimeAuditLevel = DEFAULT_AUDIT_LOG_LEVEL
@@ -5592,6 +5611,9 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val captureTuning = captureRoot?.optJSONObject("tuning")
         val captureStrictStreamOnly = captureTuning?.optBoolean("strict_stream_only", ENABLE_STRICT_STREAM_ONLY)
             ?: ENABLE_STRICT_STREAM_ONLY
+        val captureGainDb = captureTuning?.optDouble("gain_db", DEFAULT_CAPTURE_GAIN_DB)
+            ?.takeIf { it.isFinite() }
+            ?: DEFAULT_CAPTURE_GAIN_DB
 
         val loggingRoot = root.optJSONObject("logging")
         val debugWavRoot = loggingRoot?.optJSONObject("debug_wav_dump")
@@ -5675,6 +5697,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             playbackSpeedOverrides = playbackSpeeds,
             captureCandidates = captureCandidates,
             captureStrictStreamOnly = captureStrictStreamOnly,
+            captureGainDb = captureGainDb,
             captureRequestRateOverrides = captureRequestRateOverrides,
             captureRequestChannelOverrides = captureRequestChannelOverrides,
             captureEffectiveRateOverrides = captureEffectiveRateOverrides,
@@ -5844,6 +5867,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         val playbackSpeedOverrides: Map<Int, Double>,
         val captureCandidates: List<RootCaptureCandidate>,
         val captureStrictStreamOnly: Boolean,
+        val captureGainDb: Double,
         val captureRequestRateOverrides: Map<Int, Int>,
         val captureRequestChannelOverrides: Map<Int, Int>,
         val captureEffectiveRateOverrides: Map<Int, Int>,
@@ -6273,6 +6297,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         private val CAPTURE_DURATION_BY_ATTEMPT_MS = listOf(900, 1200, 1500)
         private const val ENABLE_UTTERANCE_STATE_MACHINE = true
         private const val ENABLE_STRICT_STREAM_ONLY = true
+        private const val DEFAULT_CAPTURE_GAIN_DB = 0.0
         private const val UTTERANCE_CAPTURE_CHUNK_MS = 80
         private const val UTTERANCE_PRE_ROLL_MS = 1_200
         private const val UTTERANCE_MIN_SPEECH_MS = 180

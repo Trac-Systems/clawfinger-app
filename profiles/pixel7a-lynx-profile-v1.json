@@ -91,7 +91,8 @@
       }
     },
     "tuning": {
-      "strict_stream_only": false
+      "strict_stream_only": false,
+      "gain_db": 6.0
     }
   },
   "call_session": {
