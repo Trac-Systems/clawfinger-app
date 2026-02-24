@@ -38,8 +38,9 @@
   },
   "playback": {
     "candidate_order_in_app": [
+      18,
       19,
-      18
+      29
     ],
     "tuning": {
       "persistent_session": false,
