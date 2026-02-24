@@ -123,6 +123,16 @@ class BridgeInCallService : InCallService() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    override fun onCallAudioStateChanged(state: CallAudioState?) {
+        super.onCallAudioStateChanged(state)
+        if (state != null && !state.isMuted && GatewayCallAssistantService.enforceCallMute()) {
+            Log.w(TAG, "framework reset mute to false — re-enforcing mute")
+            CommandAuditLog.add("call:mute_reenforce:framework_reset")
+            applyCallMute(true)
+        }
+    }
+
     fun applyCallMute(enabled: Boolean): Boolean {
         return runCatching {
             setMuted(enabled)
