@@ -361,6 +361,7 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         mainHandler.removeCallbacks(silenceWatchdog)
         if (callMuteEnforced.compareAndSet(true, false)) {
             InCallStateHolder.setCallMuted(false)
+            enforceAudioManagerMicMute(false)
         }
         stopRootCaptureStreamSession("service_destroy")
         stopRootPersistentPlaybackSession("service_destroy")
@@ -5951,10 +5952,22 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         val callMuted = setCallMute(true, "service_start")
         callMuteEnforced.set(callMuted)
+        // Also mute at AudioManager level — InCallService.setMuted() doesn't
+        // reliably silence the hardware mic on all devices (Pixel 7a confirmed).
+        enforceAudioManagerMicMute(true)
         if (callMuted) {
             CommandAuditLog.add("voice_bridge:call_mute:on")
         } else {
             Log.w(TAG, "call mute not enforced (no in-call service)")
+        }
+    }
+
+    private fun enforceAudioManagerMicMute(mute: Boolean) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (audioManager.isMicrophoneMute != mute) {
+            audioManager.isMicrophoneMute = mute
+            CommandAuditLog.add("voice_bridge:audio_mgr_mic_mute:$mute")
+            Log.i(TAG, "AudioManager mic mute=$mute")
         }
     }
 
@@ -5963,6 +5976,8 @@ class GatewayCallAssistantService : Service(), TextToSpeech.OnInitListener {
             return false
         }
         val callMuted = InCallStateHolder.setCallMuted(enabled)
+        // Always enforce at AudioManager level too — belt and suspenders
+        enforceAudioManagerMicMute(enabled)
         if (callMuted) {
             CommandAuditLog.add("voice_bridge:call_mute:$enabled:$reason")
         }
